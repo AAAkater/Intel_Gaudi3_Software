@@ -87,6 +87,7 @@ static const char* dfaErrorToName(DfaErrorCode errCode)
         DFA_CASE(criticalHwError);
         DFA_CASE(criticalFirmwareError);
         DFA_CASE(signal);
+        DFA_CASE(userRequested);
 
         DFA_CASE(tpcBrespErr);
         DFA_CASE(waitForMultiCsTimedOut);
@@ -331,7 +332,8 @@ void DfaBase::notifyHlthunkFailure(DfaErrorCode errCode, const DfaExtraInfo& dfa
         LOG_ERR(SYN_DEV_FAIL, "hl thunk API failed, errCode {}", dfaErrorToName(errCode));
 
         if ((errCode == DfaErrorCode::scalTdrFailed) ||
-            (errCode == DfaErrorCode::tdrFailed))
+            (errCode == DfaErrorCode::tdrFailed) ||
+            (errCode == DfaErrorCode::userRequested))
         {
             ; // in case of a timeout, no need to wait for the LKD to trigger DFA - it is a software decision that
               // LKD is not aware of
@@ -693,6 +695,15 @@ std::string DfaBase::getDfaTriggerMsg(DfaErrorCode dfaErrorCode)
             {
                 return rtn + " Signal information not collected";
             }
+        }
+
+        case DfaErrorCode::userRequested:
+        {
+            DfaExtraInfo::DfaExtraInfoMsg* dfaExtraInfoMsg =
+                std::get_if<DfaExtraInfo::DfaExtraInfoMsg>(&m_dfaExtraInfo.extraInfo);
+            return dfaExtraInfoMsg == nullptr || dfaExtraInfoMsg->msg.empty()
+                       ? "User requested device failure analysis"
+                       : "User requested device failure analysis: " + dfaExtraInfoMsg->msg;
         }
 
         case DfaErrorCode::tpcBrespErr:
@@ -1616,7 +1627,7 @@ std::pair<bool, std::string> exec(std::string cmd)
     std::string           result;
 
     cmd += " 2>&1";
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+    std::unique_ptr<FILE, int (*)(FILE*)> pipe(popen(cmd.c_str(), "r"), pclose);
 
     if (!pipe)
     {

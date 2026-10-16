@@ -36,12 +36,14 @@ static LivenessAnalysis::TensorLifetimeMap GetTensorLifetimes(const HabanaGraph&
                 if (t->isPersistent())
                 {
                     // output tensor lifetime [producer - maxIdx]
-                    // input  tensor lifetime [0 - maxIdx]
-                    it->second.m_end = maxIdx;
-                    if (graph.getNumberOfTensorProducers(t) == 0)
+                    // ordinary input lifetime [minIdx - maxIdx]
+                    // reusable input lifetime [minIdx - final consumer]
+                    const bool isGraphInput = graph.getNumberOfTensorProducers(t) == 0;
+                    if (!isGraphInput || !t->isMemoryReusable())
                     {
-                        it->second.m_start = minIdx;
+                        it->second.m_end = maxIdx;
                     }
+                    if (isGraphInput) it->second.m_start = minIdx;
                 }
             }
         }

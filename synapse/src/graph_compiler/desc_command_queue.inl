@@ -325,7 +325,7 @@ void DescCommandQueue<DescType>::AddPartialNode(
     // wait on mutex between the QMAN and its engine if required (goya2 HW bug WA)
     if (m_qmanMutexRequired)
     {
-        PushBack(std::move(m_commandFactory.getWaitForQmanMutex()), false);
+        PushBack(m_commandFactory.getWaitForQmanMutex(), false);
         terminateBlobBeforeDesc = true;
     }
 

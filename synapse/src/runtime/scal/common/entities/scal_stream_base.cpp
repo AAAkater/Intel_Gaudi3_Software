@@ -6,6 +6,8 @@
 #include "log_manager.h"
 #include "synapse_profiler_api.hpp"
 
+#include <cstring>
+
 #define LOG_SCALSTRM_TRACE(msg, ...)                                                                                   \
     LOG_TRACE(SYN_STREAM, "stream {}:" msg, m_name, ##__VA_ARGS__)
 #define LOG_SCALSTRM_DEBUG(msg, ...)                                                                                   \
@@ -65,6 +67,179 @@ ScalStreamBase::ScalStreamBase(const ScalStreamCtorInfoBase* pScalStreamCtorInfo
 ScalStreamBase::~ScalStreamBase()
 {
     releaseResources();
+}
+
+synStatus ScalStreamBase::beginNativeCommandCapture()
+{
+    if (m_nativeCommandCaptureActive)
+    {
+        LOG_ERR(SYN_STREAM, "stream {} native command capture is already active", m_name);
+        return synObjectAlreadyInitialized;
+    }
+
+    m_nativeCommandCapture.clear();
+    m_nativeCommandCaptureActive = true;
+    return synSuccess;
+}
+
+synStatus ScalStreamBase::endNativeCommandCapture(NativeScalCommandBuffer& commandBuffer)
+{
+    if (!m_nativeCommandCaptureActive)
+    {
+        LOG_ERR(SYN_STREAM, "stream {} native command capture is not active", m_name);
+        return synObjectNotInitialized;
+    }
+
+    m_nativeCommandCaptureActive = false;
+    commandBuffer                 = std::move(m_nativeCommandCapture);
+    m_nativeCommandCapture.clear();
+    return commandBuffer.empty() ? synFail : synSuccess;
+}
+
+synStatus ScalStreamBase::cancelNativeCommandCapture()
+{
+    if (!m_nativeCommandCaptureActive)
+    {
+        return synObjectNotInitialized;
+    }
+    m_nativeCommandCaptureActive = false;
+    m_nativeCommandCapture.clear();
+    return synSuccess;
+}
+
+void ScalStreamBase::noteNativeCompletionIncrementsBeforeCommands(uint64_t increments)
+{
+    if (m_nativeCommandCaptureActive)
+    {
+        m_nativeCommandCapture.completionIncrementsBeforeCommands += increments;
+    }
+}
+
+std::vector<NativeComputeWaitPacket> ScalStreamBase::prepareNativeWaitPackets(uint32_t longSoIndex)
+{
+    if (!std::holds_alternative<G2Packets>(m_gxPackets) || !isComputeStream())
+        throw std::invalid_argument("Native compute program requires Gaudi2 compute stream");
+    MonitorAddressesType addresses;
+    MonitorValuesType values;
+    if (!getMonitor()->nativeArmRegisters(longSoIndex, addresses, values))
+        throw std::invalid_argument("Unsupported native long-SO monitor layout");
+    std::vector<NativeComputeWaitPacket> packets;
+    using Lbw = LbwWritePkt<G2Packets>;
+    for (unsigned n = 0; n < 4; ++n)
+    {
+        NativeComputeWaitPacket packet;
+        packet.bytes.resize(Lbw::getSize());
+        Lbw::build(packet.bytes.data(), uint32_t(addresses[n]), values[n], false);
+        packet.patches.push_back({uint32_t(offsetof(Lbw::pktType, src_data)), 0, 0xfffe0000u,
+                                  uint8_t(((n + 1) % 4) * 15), 17});
+        packets.push_back(std::move(packet));
+    }
+    NativeComputeWaitPacket fence;
+    fence.bytes.resize(FenceWaitPkt<G2Packets>::getSize());
+    FenceWaitPkt<G2Packets>::build(fence.bytes.data(), m_fenceId, 1);
+    packets.push_back(std::move(fence));
+    return packets;
+}
+
+uint64_t ScalStreamBase::nativeAvailableBytes() const
+{
+    const uint64_t size = uint64_t(GCFG_HOST_CYCLIC_BUFFER_SIZE.value()) * 1024;
+    const uint64_t chunks = GCFG_HOST_CYCLIC_BUFFER_CHUNKS_AMOUNT.value();
+    return chunks > 2 ? size - 2 * (size / chunks) : 0;
+}
+
+bool ScalStreamBase::nativeTerminalRelease(const NativeScalCommandBuffer& commands) const
+{
+    if (!std::holds_alternative<G2Packets>(m_gxPackets) || commands.commands.size() < 2) return false;
+    const auto& last = commands.commands.back();
+    using Fence = FenceIncImmediatePkt<G2Packets>;
+    if (last.completesChunk || last.bytes.size() != Fence::getSize() ||
+        !commands.commands[commands.commands.size() - 2].completesChunk) return false;
+    Fence::pktType packet;
+    std::memcpy(&packet, last.bytes.data(), sizeof(packet));
+    std::vector<uint8_t> expected(Fence::getSize());
+    Fence::build(expected.data(), packet.fence_index);
+    return last.bytes == expected;
+}
+
+synStatus ScalStreamBase::publishNativeComputeProgram(const NativeComputeProgram& program,
+    const synNativeGraphSyncInfo* completions, const ScalLongSyncObject& base,
+    std::vector<CommandSubmissionData>& scratch, uint64_t& submissions)
+{
+    if (m_nativeCommandCaptureActive || scratch.size() != 2 || program.pages.empty()) return synInvalidArgument;
+    submissions = 0;
+    for (const auto& page : program.pages)
+    {
+        for (auto& entry : scratch) entry = {0, 0, nullptr, false};
+        auto copy = [&](uint8_t* destination) { NativeComputeProgram::writePage(destination, page, completions); };
+        synStatus status = getStreamCyclicBuffer()->addCommand(page.bytes.size(), true, copy, scratch);
+        if (status != synSuccess) return status;
+        ScalLongSyncObject retire = base;
+        retire.m_targetValue += page.completionOffset;
+        getStreamCyclicBuffer()->recordNativePageCompletion(page.bytes.size(), retire);
+        for (const auto& entry : scratch)
+            if (entry.valid)
+            {
+                if (scal_stream_submit(m_streamHndl, entry.pi, m_submitAlign) != SCAL_SUCCESS)
+                    return synFailedToSubmitWorkload;
+                ++submissions;
+            }
+    }
+    const size_t lastWait = program.lastWaitDependency();
+    if (lastWait != std::numeric_limits<size_t>::max())
+        getMonitor()->nativeArmCompleted(completions[lastWait].targetValue);
+    m_prevCmdIsWait = false;
+    m_consecutiveWaitCommands = 0;
+    return synSuccess;
+}
+
+synStatus ScalStreamBase::replayNativeCommands(const NativeScalCommandBuffer& commandBuffer,
+                                               bool                           preserveCapturedSubmissions,
+                                               bool                           submitLastCommand,
+                                               ScalLongSyncObject&            completion)
+{
+    if (m_nativeCommandCaptureActive)
+    {
+        LOG_ERR(SYN_STREAM, "stream {} cannot replay while native command capture is active", m_name);
+        return synInvalidArgument;
+    }
+    if (commandBuffer.commands.empty())
+    {
+        LOG_ERR(SYN_STREAM, "stream {} cannot replay an empty native command buffer", m_name);
+        return synInvalidArgument;
+    }
+
+    if (commandBuffer.completionIncrementsBeforeCommands != 0)
+    {
+        completion = getIncrementedLongSo(true, commandBuffer.completionIncrementsBeforeCommands);
+    }
+
+    for (size_t index = 0; index < commandBuffer.commands.size(); ++index)
+    {
+        const NativeScalCommand& command = commandBuffer.commands[index];
+        const bool isLast                = index + 1 == commandBuffer.commands.size();
+        const bool send = (preserveCapturedSubmissions && command.submittedDuringCapture) ||
+                          (submitLastCommand && isLast);
+
+        synStatus status = addCmd(command.bytes.size(), send, [&](uint8_t* buffer) {
+            std::memcpy(buffer, command.bytes.data(), command.bytes.size());
+        });
+        if (status != synSuccess)
+        {
+            return status;
+        }
+
+        if (command.completesChunk)
+        {
+            status = doneChunkOfCommands(command.userCompletion, completion);
+            if (status != synSuccess)
+            {
+                return status;
+            }
+        }
+    }
+
+    return synSuccess;
 }
 
 /*
@@ -489,6 +664,23 @@ synStatus ScalStreamBase::doneChunkOfCommands(bool isUserReq, ScalLongSyncObject
 {
     rLongSo = getIncrementedLongSo(isUserReq);
     getStreamCyclicBuffer()->doneChunkOfCommands(rLongSo);
+
+    if (m_nativeCommandCaptureActive)
+    {
+        if (m_nativeCommandCapture.commands.empty())
+        {
+            LOG_ERR(SYN_STREAM, "stream {} captured a completion without a preceding command", m_name);
+            return synFail;
+        }
+        NativeScalCommand& command = m_nativeCommandCapture.commands.back();
+        if (command.completesChunk)
+        {
+            LOG_ERR(SYN_STREAM, "stream {} captured two completions for one command", m_name);
+            return synFail;
+        }
+        command.completesChunk = true;
+        command.userCompletion = isUserReq;
+    }
 
     return synSuccess;
 }

@@ -114,6 +114,64 @@ synStatus SYN_API_CALL synStreamSynchronize( const synStreamHandle streamHandle 
  */
 synStatus SYN_API_CALL synStreamQuery( const synStreamHandle streamHandle );
 
+// Research API for a fixed-address SCAL compute command graph. Capture executes
+// the cold launches once and retains their recipe program storage. Replay skips
+// recipe preparation, address patching, PDMA download and per-recipe synLaunch.
+// A graph handle is bound to one stream and must be destroyed before that stream.
+synStatus SYN_API_CALL synNativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                                   const synStreamHandle        streamHandle);
+synStatus SYN_API_CALL synNativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle);
+synStatus SYN_API_CALL synNativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle);
+synStatus SYN_API_CALL synNativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle);
+synStatus SYN_API_CALL synNativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle);
+synStatus SYN_API_CALL synNativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle);
+synStatus SYN_API_CALL synNativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                                          uint64_t                      segmentIndex,
+                                                          const synNativeGraphSyncInfo* dependency,
+                                                          uint8_t                       submit,
+                                                          synNativeGraphSyncInfo*       completion);
+synStatus SYN_API_CALL synNativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                                    synNativeComputeGraphInfo*   graphInfo);
+synStatus SYN_API_CALL synNativeComputeGraphGetWorkspaceBytes(synNativeComputeGraphHandle graphHandle,
+                                                             uint64_t* workspaceBytes);
+synStatus SYN_API_CALL synNativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle);
+// Internal research plan. The caller retains the callback context and graph
+// until all queued consumers complete; one replay publishes the prepared NIC
+// program and the compute command pages without per-segment API calls.
+synStatus SYN_API_CALL synNativeComputeGraphPreparePlan(synNativeComputeGraphHandle graphHandle,
+    const uint32_t* consumerSegments, uint64_t count, uint32_t nicLongSoIndex,
+    synNativeGraphExchangeReplay exchangeReplay, void* context);
+// V2: producerSegments names the completed segment; UINT32_MAX means external input.
+synStatus SYN_API_CALL synNativeComputeGraphPreparePlanV2(synNativeComputeGraphHandle graphHandle,
+    const uint32_t* producerSegments, const uint32_t* consumerSegments, uint64_t count, uint32_t nicLongSoIndex,
+    synNativeGraphExchangeReplay exchangeReplay, void* context);
+// Preserve one captured graph while publishing an early compute/NIC prefix and
+// its dependent suffix in two ordered calls. The split counts NIC operations.
+synStatus SYN_API_CALL synNativeComputeGraphPrepareSegmentedPlanV2(
+    synNativeComputeGraphHandle graphHandle, const uint32_t* producerSegments,
+    const uint32_t* consumerSegments, uint64_t count, uint64_t prefixCollectives,
+    uint32_t nicLongSoIndex, synNativeGraphExchangeReplay exchangeReplay, void* context);
+// V3 separates the compute boundary from NIC consumers. The caller verifies
+// that prefixComputes excludes every recipe reading a late input binding.
+synStatus SYN_API_CALL synNativeComputeGraphPrepareBoundedPlanV1(
+    synNativeComputeGraphHandle handle, const uint32_t* producerSegments, const uint32_t* consumerSegments,
+    uint64_t collectiveCount, const uint32_t* minimumTileBound, uint64_t segmentCount, uint32_t maximumTileBound,
+    uint32_t nicLongSoIndex, synNativeGraphExchangeReplay callback, void* context);
+synStatus SYN_API_CALL synNativeComputeGraphReplayBoundedPlanV1(
+    synNativeComputeGraphHandle handle, uint32_t tileBound, synNativeGraphSyncInfo* completion,
+    uint64_t* statistics, uint64_t statisticCount);
+
+synStatus SYN_API_CALL synNativeComputeGraphPrepareSegmentedPlanV3(
+    synNativeComputeGraphHandle graphHandle, const uint32_t* producerSegments,
+    const uint32_t* consumerSegments, uint64_t count, uint64_t prefixCollectives,
+    uint32_t prefixComputes, uint32_t nicLongSoIndex, synNativeGraphExchangeReplay exchangeReplay, void* context);
+synStatus SYN_API_CALL synNativeComputeGraphReplayPlan(synNativeComputeGraphHandle graphHandle,
+    synNativeGraphSyncInfo* completion, uint64_t* statistics, uint64_t statisticsCount);
+synStatus SYN_API_CALL synNativeComputeGraphReplayPlanPrefix(synNativeComputeGraphHandle graphHandle,
+    synNativeGraphSyncInfo* completion, uint64_t* statistics, uint64_t statisticsCount);
+synStatus SYN_API_CALL synNativeComputeGraphReplayPlanFinish(synNativeComputeGraphHandle graphHandle,
+    synNativeGraphSyncInfo* completion, uint64_t* statistics, uint64_t statisticsCount);
+
 //!
 /*!
  ***************************************************************************************************
@@ -1351,6 +1409,12 @@ synStatus SYN_API_CALL synNodeSetDeterministic( const synGraphHandle   graphHand
                                                 const synNodeId        nodeId,
                                                 const bool             useDeterministic);
 
+// Copy user scheduling or bundling metadata into the node. The pointed-to
+// metadata is not retained after this call.
+synStatus SYN_API_CALL synNodeSetUserProgrammability(const synGraphHandle          graphHandle,
+                                                     const synNodeId               nodeId,
+                                                     const synUserProgrammability* userProgrammability);
+
 //!
 /*!
  ***************************************************************************************************
@@ -2315,6 +2379,13 @@ synStatus SYN_API_CALL synTensorSetQuantizationData(synTensor               tens
 synStatus SYN_API_CALL synTensorSetExternal(synTensor               tensor,
                                             bool                    isExternal);
 
+// Mark a persistent input buffer as reusable after its final graph consumer.
+// Passing true for a non-persistent tensor is rejected.
+synStatus SYN_API_CALL synTensorSetMemoryReuse(synTensor tensor, bool isReusable);
+
+// Request that the compiler prioritize production of this tensor when legal.
+synStatus SYN_API_CALL synTensorSetMinimalLatency(synTensor tensor, bool minimalLatency);
+
 //!
 /*!
  ***************************************************************************************************
@@ -2627,6 +2698,8 @@ synStatus SYN_API_CALL synTensorGetGeometryExt(const synTensor         tensor,
 synStatus SYN_API_CALL synTensorGetExternal(const synTensor         tensor,
                                             bool*                   isExternal);
 
+synStatus SYN_API_CALL synTensorGetMinimalLatency(const synTensor tensor, bool* isMinimalLatency);
+
 //!
 /*!
  ***************************************************************************************************
@@ -2895,6 +2968,19 @@ synStatus SYN_API_CALL synNodeGetUserParams( const synGraphHandle   graphHandle,
  ***************************************************************************************************
  */
 synStatus SYN_API_CALL synStatusGetBriefDescription(synStatus status, char* statusDescription, size_t len);
+
+// Request device-failure diagnostics. This normally terminates the process
+// after collection; it returns when Synapse is uninitialized or no device is
+// acquired.
+synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags);
+
+// Forward host-side device-memory accounting to the kernel driver.
+synStatus SYN_API_CALL synUpdateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec);
+
+// Per-host-thread status and diagnostics from the most recent Synapse call.
+synStatus SYN_API_CALL synGetLastError();
+const char* SYN_API_CALL synGetErrorString(synStatus status);
+const char* SYN_API_CALL synGetLastErrorMessage();
 
 #ifdef __cplusplus
 }

@@ -24,6 +24,7 @@
 #include <lemon/list_graph.h>
 #include <lemon/unionfind.h>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string.h>
@@ -2413,13 +2414,14 @@ optimizedGraphStatus tryNodesReplacementInGraph(HabanaGraph&                    
                                                 const std::pair<NodePtr, NodeList>&       fusedNodeOrigNodePair,
                                                 std::map<NodePtr, std::vector<unsigned>>& newNodesPerFusedNode,
                                                 std::map<unsigned, NodePtr>&              newNodeIdMap,
+                                                NodeList&                                 nodesToAdd,
+                                                std::unordered_set<NodePtr>&              totalOriginalNodesSet,
                                                 bool                                      isNeedToReplaceNodes = true,
                                                 bool                                      isPartOfSubgraph     = false)
 {
     // Replace received nodes from fuser with their original nodes in the graph
     // If the node belongs to subgraph send all subgraph nodes and then originals to the same call of replaceNodes
 
-    static NodeList nodesToAdd;
     const NodePtr&  fusedNode     = fusedNodeOrigNodePair.first;
     NodeList        originalNodes = fusedNodeOrigNodePair.second;
 
@@ -2461,7 +2463,6 @@ optimizedGraphStatus tryNodesReplacementInGraph(HabanaGraph&                    
     if (isPartOfSubgraph)
     {
         // The node is part of subgraph, add it all original nodes to the total original nodes in this subgraph
-        static std::unordered_set<NodePtr> totalOriginalNodesSet;
         totalOriginalNodesSet.insert(originalNodes.begin(), originalNodes.end());
 
         if (isNeedToReplaceNodes)
@@ -2496,11 +2497,15 @@ optimizedGraphStatus tryNodesReplacementInGraph(HabanaGraph&                    
 //     If false value returned to the caller - GC graph remains unmodified
 optimizedGraphStatus replaceOptimizedCluster(HabanaGraph& graph, const std::shared_ptr<GCTPCFuserWrapper>& fuser)
 {
-    static int fusedClustersCounter = -1;
-    int        fusedNodesCounter    = 0;
-    int        newNodesCounter      = 0;
+    static std::atomic<int> nextClusterId {0};
+    const int fusedClustersCounter = nextClusterId.fetch_add(1, std::memory_order_relaxed);
+    int       fusedNodesCounter    = 0;
+    int       newNodesCounter      = 0;
 
-    fusedClustersCounter++;
+    // Pending replacements belong to this cluster, including early failure paths.
+    // Concurrent graph compilations must never exchange node ownership.
+    NodeList                    nodesToAdd;
+    std::unordered_set<NodePtr> totalOriginalNodesSet;
 
     LOG_DEBUG(GC_TPC_FUSER, "tpcFuser: fusing nodes of subgraph (cluster) {}.", fusedClustersCounter);
 
@@ -2756,6 +2761,8 @@ optimizedGraphStatus replaceOptimizedCluster(HabanaGraph& graph, const std::shar
                                                             fusedNodeOrigNodesPair,
                                                             newNodesPerFusedNode,
                                                             newNodeIdMap,
+                                                            nodesToAdd,
+                                                            totalOriginalNodesSet,
                                                             isLastNodeInSubgraph,
                                                             true);
                         if (status != optimizedGraphSuccess) return status;
@@ -2774,7 +2781,8 @@ optimizedGraphStatus replaceOptimizedCluster(HabanaGraph& graph, const std::shar
                           fusedNode->getId());
 
                 // this node is not part of subgraph
-                status = tryNodesReplacementInGraph(graph, pair, newNodesPerFusedNode, newNodeIdMap, true);
+                status = tryNodesReplacementInGraph(
+                    graph, pair, newNodesPerFusedNode, newNodeIdMap, nodesToAdd, totalOriginalNodesSet, true);
                 if (status != optimizedGraphSuccess) return status;
             }
         }
@@ -2788,7 +2796,8 @@ optimizedGraphStatus replaceOptimizedCluster(HabanaGraph& graph, const std::shar
                       fusedNode->getId());
 
             // this node is not part of subgraph
-            status = tryNodesReplacementInGraph(graph, pair, newNodesPerFusedNode, newNodeIdMap, true);
+            status = tryNodesReplacementInGraph(
+                    graph, pair, newNodesPerFusedNode, newNodeIdMap, nodesToAdd, totalOriginalNodesSet, true);
             if (status != optimizedGraphSuccess) return status;
         }
     }

@@ -16,6 +16,8 @@
 // Infra
 #include "event_dispatcher.hpp"
 
+#include <unordered_set>
+
 class QueueInterface;
 struct LaunchInfo;
 
@@ -57,6 +59,8 @@ public:
     virtual synStatus createEvent(synEventHandle* pEventHandle, const unsigned int flags) override;
 
     virtual synStatus destroyEvent(synEventHandle eventHandle) override;
+
+    synStatus destroyStream(synStreamHandle streamHandle) override;
 
     virtual EventSptr getEventSptr(synEventHandle eventHandle) override;
 
@@ -103,6 +107,22 @@ public:
 
     virtual void getDeviceHbmVirtualAddresses(uint64_t& hbmBaseAddr, uint64_t& hbmEndAddr) override;
 
+    synStatus nativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                       synStreamHandle              streamHandle) override;
+    synStatus nativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle) override;
+    synStatus nativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle) override;
+    synStatus nativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle) override;
+    synStatus nativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle) override;
+    synStatus nativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle) override;
+    synStatus nativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                              uint64_t                      segmentIndex,
+                                              const synNativeGraphSyncInfo* dependency,
+                                              uint8_t                       submit,
+                                              synNativeGraphSyncInfo*       completion) override;
+    synStatus nativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                        synNativeComputeGraphInfo*   graphInfo) const override;
+    synStatus nativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle) override;
+
 protected:
     virtual synStatus eventRecord(EventInterface* pEventInterface, synStreamHandle streamHandle) override;
 
@@ -146,6 +166,7 @@ private:
     void checkArcsHeartBeat(bool isSimulator);
 
     synStatus releaseAllStreams();
+    synStatus releaseAllNativeComputeGraphs();
 
     synStatus getTdrIrqMonitorArmRegAddr(volatile uint32_t*& tdrIrqMonitorArmRegAddr) override;
 
@@ -166,6 +187,9 @@ private:
     EventConnection             m_eventConnection;
     uint64_t                    m_collectiveStreamNum;
     bool                        m_hclInit;
+
+    mutable std::mutex                              m_nativeGraphMutex;
+    std::unordered_set<synNativeComputeGraphHandle> m_nativeComputeGraphs;
 
     static const AffinityCountersArray s_maxAffinitiesDefault;
     static const AffinityCountersArray s_maxAffinitiesHCLDisable;

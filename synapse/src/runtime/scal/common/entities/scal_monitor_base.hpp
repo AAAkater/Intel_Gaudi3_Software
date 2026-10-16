@@ -35,6 +35,9 @@ public:
     virtual bool getPayloadInfo(uint64_t& payloadAddress, uint32_t& payloadData, FenceIdType fenceId) const = 0;
 
     uint64_t getSyncMgrId() { return m_syncMgrId; };
+    bool nativeArmRegisters(uint32_t longSoIndex, MonitorAddressesType& addresses,
+                            MonitorValuesType& values) const;
+    void nativeArmCompleted(uint64_t target) { m_lastLongSOtargetValue = target; }
 
 protected:
     uint64_t m_syncMgrId;

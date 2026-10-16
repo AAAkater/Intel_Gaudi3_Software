@@ -366,6 +366,8 @@ public:
     void setTensorInWorkspace();                    // Sets tensor to be in Dram workspace
     void setTensorAlignment(unsigned cacheLineSize) { getTensorAnnotation().memory.alignment = cacheLineSize; }
     void setTensorAsExternal(bool isExternal) {m_isExternal = isExternal;}// Sets tensor to be in external
+    void setTensorAsReusable(bool isReusable) { m_isMemoryReusable = isReusable; }
+    void setMinimalLatency(bool minimalLatency) { m_minimalLatency = minimalLatency; }
     void unsetSramOffset();
     void unsetDramOffset();
 
@@ -682,6 +684,8 @@ public:
     const uint32_t              getGraphID() const                                      { return m_graphID; }
     uint64_t                    getMemorySectionOffset() const                          { return m_memorySectionOffset; }
     bool                        getTensorIsExternal() const                             { return m_isExternal;}
+    bool                        isMemoryReusable() const                                { return m_isMemoryReusable; }
+    bool                        isMinimalLatency() const                                { return m_minimalLatency; }
 
     uint64_t getMemorySectionID() const
     {
@@ -883,6 +887,8 @@ private:
     bool                                   m_lockProps             = false;
     bool                                   m_duplicatedTensor      = false;
     bool                                   m_isExternal            = false;
+    bool                                   m_isMemoryReusable      = false;
+    bool                                   m_minimalLatency        = false;
     TensorPtr                              m_twinHost2DeviceTensor = nullptr;
     bool                                   m_isHostOnly            = false;
 

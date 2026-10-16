@@ -850,7 +850,7 @@ Range HeapAllocatorBestFit::getMaxFreeRange() const
 /****                  HeapAllocatorWrapper                     *****/
 /*********************************************************************/
 HeapAllocatorWrapper::HeapAllocatorWrapper(const std::string&                    name,
-                                           const TensorVector&                   outputTensors,
+                                           const TensorVector&                   reusablePersistentTensors,
                                            const LivenessAnalysis&               livenessAnalysis,
                                            const std::shared_ptr<HeapAllocator>& workspaceHeapAllocator,
                                            uint32_t                              statFreq,
@@ -862,23 +862,23 @@ HeapAllocatorWrapper::HeapAllocatorWrapper(const std::string&                   
   m_logStats(logStats),
   m_WSAllocator(workspaceHeapAllocator)
 {
-    for (const TensorPtr& t : outputTensors)
+    for (const TensorPtr& t : reusablePersistentTensors)
     {
         uint64_t      tensor_sizes     = t->getMinimalSizeInBytes();
         Lifetime      tensorLife       = livenessAnalysis.getTensorLifeTime(t);
         uint64_t      tensorSectionIdx = t->getMemorySectionID();
-        std::string   allocatorName    = fmt::format("{}_output_buffer_{}", name, tensorSectionIdx);
-        HeapAllocator outputAllocator(allocatorName, statFreq, false, threadSafe, logStats);
+        std::string   allocatorName    = fmt::format("{}_persistent_buffer_{}", name, tensorSectionIdx);
+        HeapAllocator persistentAllocator(allocatorName, statFreq, false, threadSafe, logStats);
 
-        outputAllocator.Init(tensor_sizes, t->getDramOffset());
+        persistentAllocator.Init(tensor_sizes, t->getDramOffset());
         LOG_DEBUG(HEAP_ALLOC,
-                  "creating new output buffer allocator with size {} and lifetime start {} end {} tensor sectionIdx {}",
+                  "creating persistent buffer allocator with size {} and lifetime start {} end {} tensor sectionIdx {}",
                   tensor_sizes,
                   tensorLife.m_start,
                   tensorLife.m_end,
                   tensorSectionIdx);
 
-        m_sectionIdxToAllocatorLivenessMap.emplace(tensorSectionIdx, std::make_pair(outputAllocator, tensorLife));
+        m_sectionIdxToAllocatorLivenessMap.emplace(tensorSectionIdx, std::make_pair(persistentAllocator, tensorLife));
         m_sortedAllocatorLivenessMap.emplace_back(std::make_pair(tensor_sizes, tensorSectionIdx));
     }
     std::sort(m_sortedAllocatorLivenessMap.begin(), m_sortedAllocatorLivenessMap.end());
@@ -920,7 +920,7 @@ Settable<deviceAddrOffset> HeapAllocatorWrapper::Allocate(uint64_t size,
         Settable<deviceAddrOffset> addr = heapAllocator.Allocate(size, alignment, offset, true, requestedAddress);
         if (addr.is_set())
         {
-            LOG_DEBUG(HEAP_ALLOC, "allocate tensor in one of persitent output size 0x{:x}", size);
+            LOG_DEBUG(HEAP_ALLOC, "allocate tensor in reusable persistent buffer, size 0x{:x}", size);
             return addr;
         }
     }

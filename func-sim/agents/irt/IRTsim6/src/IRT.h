@@ -15,6 +15,7 @@
 #ifndef IRT_H_
 #define IRT_H_
 
+#include <cstdint>
 #include <string>
 #define _CRT_SECURE_NO_WARNINGS 1
 

@@ -82,45 +82,56 @@ static void clearAllocationStateBeforeRecalculation(HabanaGraph& g, const Tensor
     std::for_each(tensors.begin(), tensors.end(), [](auto& tensor) { tensor->unsetDramOffset(); });
 }
 
-static TensorVector gatherOutputTensors(HabanaGraph& g)
+static TensorVector gatherReusablePersistentTensors(HabanaGraph& g)
 {
-    TensorVector outputTensors;
-    if (!GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE.value()) return outputTensors;
+    TensorVector reusableTensors;
+    if (!GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE.value() && !GCFG_ENABLE_PERSISTENT_INPUT_REUSE.value())
+    {
+        return reusableTensors;
+    }
     const auto& memoryCoherence = g.getGraphAnnotation().memoryCoherence;
     for (const TensorPtr& t : g.getTensors())
     {
         if (t && t->isPersistent())
         {
-            if (g.getNumberOfTensorProducers(t) != 0)
+            const bool isOutput = g.getNumberOfTensorProducers(t) != 0;
+            const bool reuseOutput = isOutput && GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE.value();
+            const bool reuseInput  = !isOutput && t->isMemoryReusable() &&
+                                    GCFG_ENABLE_PERSISTENT_INPUT_REUSE.value();
+            if (reuseOutput || reuseInput)
             {
                 if (memoryCoherence->previousOverlapsWithOthersInSection(t)) continue;
-                outputTensors.push_back(t);
+                reusableTensors.push_back(t);
             }
         }
     }
-    return outputTensors;
+    return reusableTensors;
 }
 
-static std::pair<uint64_t, uint64_t> calculateSizesForEpochBinarySearch(const TensorVector&   outputTensors,
+static std::pair<uint64_t, uint64_t> calculateSizesForEpochBinarySearch(const TensorVector&   reusableTensors,
                                                                         LivenessAnalysis      livenessAnalysis,
                                                                         std::vector<uint64_t> usedMem)
 {
-    uint64_t outputSizes             = 0;
+    uint64_t reusableSizes           = 0;
     uint64_t adjustedMaxLiveCapacity = 0;
     if (usedMem.size() == 0) return {};
-    for (const TensorPtr& t : outputTensors)
+    for (const TensorPtr& t : reusableTensors)
     {
         uint64_t    tensor_sizes = t->getMinimalSizeInBytes();
         const auto& tensorLife   = livenessAnalysis.getTensorLifeTime(t);
-        outputSizes += tensor_sizes;
+        reusableSizes += tensor_sizes;
         for (uint32_t i = 0; i < tensorLife.m_start; ++i)
+        {
+            usedMem[i] = std::max<int64_t>(1, usedMem[i] - tensor_sizes);
+        }
+        for (uint32_t i = tensorLife.m_end + 1; i < usedMem.size(); ++i)
         {
             usedMem[i] = std::max<int64_t>(1, usedMem[i] - tensor_sizes);
         }
     }
     adjustedMaxLiveCapacity = *std::max_element(begin(usedMem), end(usedMem));
     adjustedMaxLiveCapacity = std::max<int64_t>(1, adjustedMaxLiveCapacity);
-    return std::make_pair(outputSizes, adjustedMaxLiveCapacity);
+    return std::make_pair(reusableSizes, adjustedMaxLiveCapacity);
 }
 
 static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors)
@@ -131,12 +142,12 @@ static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors
     AllLivenessAnalysis            allLivenessAnalysis(&g);
     auto                           maxLiveCapacity = livenessAnalysis.getGraphMaxCapacity();
     const std::vector<uint64_t>&   usedMem         = livenessAnalysis.getUsedMem();
-    TensorVector                   outputTensors   = gatherOutputTensors(g);
-    uint64_t                       outputSize, adjustedMaxLiveCapacity;
-    std::tie(outputSize, adjustedMaxLiveCapacity) =
-        calculateSizesForEpochBinarySearch(outputTensors, allLivenessAnalysis, usedMem);
+    TensorVector                   reusableTensors = gatherReusablePersistentTensors(g);
+    uint64_t                       reusableSize, adjustedMaxLiveCapacity;
+    std::tie(reusableSize, adjustedMaxLiveCapacity) =
+        calculateSizesForEpochBinarySearch(reusableTensors, allLivenessAnalysis, usedMem);
     HeapAllocatorWrapper heapAllocatorWrapper("HeapAllocatorWrapper",
-                                              outputTensors,
+                                              reusableTensors,
                                               allLivenessAnalysis,
                                               workSpaceAllocator,
                                               0);
@@ -150,7 +161,7 @@ static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors
         // actual allocation
         LOG_INFO(TENSORS_ALLOC,
                  "DRAM allocation using default allocator -- Tensors workspace size: {}, max live capacity measured: "
-                 "{}, max live capacity with output reuse: {}",
+                 "{}, max live capacity with persistent tensor reuse: {}",
                  initialWorkspaceSize,
                  maxLiveCapacity,
                  adjustedMaxLiveCapacity);
@@ -177,7 +188,7 @@ static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors
     {
         // learning of the workspace size, we use a local allocator in here
         currentWorkspaceSize            = (minWorkspaceSize + maxWorkspaceSize) / 2;
-        currentEpochSize                = currentWorkspaceSize + outputSize;
+        currentEpochSize                = currentWorkspaceSize + reusableSize;
         double workspaceSizeRangeFactor = static_cast<double>(maxWorkspaceSize) / minWorkspaceSize;
         if (workspaceSizeRangeFactor <= 1 + GCFG_WORKSPACE_EPOCH_SIZE_PERCISION.value()) break;
         clearAllocationStateBeforeRecalculation(g, tensors);
@@ -222,7 +233,7 @@ static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors
         LOG_INFO(TENSORS_ALLOC,
                  "DRAM allocation using epoch allocator -- Epoch size {} Tensors workspace size: {}, default allocator "
                  "workspace "
-                 "size {}, max live capacity measured: {}, max live capacity with output reuse: {}",
+                 "size {}, max live capacity measured: {}, max live capacity with persistent tensor reuse: {}",
                  bestEpochSize,
                  bestWorkspaceSize,
                  defaultAllocationSuccess ? initialWorkspaceSize : UINT64_MAX,
@@ -237,7 +248,7 @@ static bool allocateRemainingTensors(HabanaGraph& g, const TensorVector& tensors
     }
     LOG_INFO(TENSORS_ALLOC,
              "DRAM allocation using default allocator -- Tensors workspace size: {}, max live capacity measured: {}, "
-             "max live capacity with output reuse: {}",
+             "max live capacity with persistent tensor reuse: {}",
              initialWorkspaceSize,
              maxLiveCapacity,
              adjustedMaxLiveCapacity);
@@ -373,9 +384,9 @@ bool allocateTensors(HabanaGraph& g)
         }
     }
 
-    // Workspace tensors that reuse persistent output memory space are effectively moved from the workspace section
+    // Workspace tensors that reuse persistent tensor memory space are effectively moved from the workspace section
     // to persistent tensor section; thus, we need to update their memory section ID after the allocation.
-    if (GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE.value())
+    if (GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE.value() || GCFG_ENABLE_PERSISTENT_INPUT_REUSE.value())
     {
         for (const TensorPtr& t : g.getTensors())
         {

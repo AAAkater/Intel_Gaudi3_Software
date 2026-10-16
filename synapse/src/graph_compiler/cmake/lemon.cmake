@@ -4,9 +4,12 @@
 
 if (NOT TARGET lemon_project)
     include(ExternalProject)
+    set(lemon_build_dir "${CMAKE_BINARY_DIR}/ThirdParty/src/lemon_project-build")
 
     ExternalProject_Add(lemon_project
+        BUILD_ALWAYS TRUE
         URL "$ENV{HABANA_SOFTWARE_STACK}/3rd-parties/lemon/"
+        BINARY_DIR "${lemon_build_dir}"
         TIMEOUT 10
         CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
                 -Dgtest_force_shared_crt=ON
@@ -15,7 +18,7 @@ if (NOT TARGET lemon_project)
         LOG_DOWNLOAD ON
         LOG_CONFIGURE ON
         LOG_BUILD ON
-        BUILD_BYPRODUCTS "${binary_dir}/lemon/libemon.a"
+        BUILD_BYPRODUCTS "${lemon_build_dir}/lemon/libemon.a"
     )
 endif()
 

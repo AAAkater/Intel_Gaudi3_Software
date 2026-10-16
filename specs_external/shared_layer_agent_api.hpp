@@ -32,4 +32,16 @@ extern "C"
 SharedLayer::Return_t
 HLSL_validate_guid(const SharedLayer::Params_t* const params);
 
+/* HLSL_validate_guidV2 extends validation with the dynamic-shape and special
+ * input capabilities carried by ParamsV2_t. */
+extern "C"
+SharedLayer::Return_t
+HLSL_validate_guidV2(const SharedLayer::ParamsV2_t* const params);
+
+/* HLSL_query_guid runs only the validations selected by queryBitMap and ORs
+ * every failed query into resultBitMap. */
+extern "C"
+SharedLayer::Return_t
+HLSL_query_guid(const SharedLayer::QueryParams_t* const params);
+
 #endif // SHARED_LAYER_AGENT_API_H

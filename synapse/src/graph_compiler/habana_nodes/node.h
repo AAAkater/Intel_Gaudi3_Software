@@ -11,6 +11,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -412,6 +413,10 @@ public:
 
     void                                      setRoundingMode(synRoundingMode value) { m_roundingMode = value; }
     synRoundingMode                           getRoundingMode() const { return m_roundingMode; }
+    void                                      setUserProgrammability(const synUserProgrammability& value);
+    const std::optional<synUserExecOrder>&     getUserExecOrder() const { return m_userExecOrder; }
+    const std::optional<synUserBundling>&      getUserBundling() const { return m_userBundling; }
+    bool                                      producesMinimalLatencyTensor() const;
     bool                                      hasHighRankOperand() const;
 
     virtual void updateCache();
@@ -478,6 +483,8 @@ protected:
     RawParamsData                  m_paramsRawData;
     bool                           m_deterministic;
     synRoundingMode                m_roundingMode;
+    std::optional<synUserExecOrder> m_userExecOrder;
+    std::optional<synUserBundling>  m_userBundling;
 
     mutable gc::access_pattern::NodeAccessPatternPtr m_nodeAccessPatternCache;
 

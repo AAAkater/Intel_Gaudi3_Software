@@ -667,9 +667,9 @@ void QueueCopyQman::_notifyCsCompleted(uint64_t waitForEventHandle, bool csFaile
               waitForEventHandle,
               csFailed);
 
-    delete pCsDataChunks;
     m_csDataChunksDb.erase(iter);
     m_csDescriptionDB.erase(pCsDataChunks);
+    delete pCsDataChunks;
 }
 
 synStatus QueueCopyQman::isValidOperation(internalDmaDir direction, const internalMemcopyParams& rMemcpyParams)

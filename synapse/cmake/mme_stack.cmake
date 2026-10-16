@@ -37,6 +37,7 @@ else()
 
 
         ExternalProject_Add(MmeStack
+            BUILD_ALWAYS TRUE
             TIMEOUT 10
             CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}" -DCMAKE_COLOR_MAKEFILE=${CMAKE_COLOR_MAKEFILE} -DSANITIZE_ON=${SANITIZE_ON} -DVALGRIND_ON=${VALGRIND_ON} -DMME_VER=OFF -DSYN_DEPEND=ON -DTESTS_ENABLED=OFF
             SOURCE_DIR "$ENV{MME_ROOT}"
@@ -46,7 +47,9 @@ else()
             LOG_DOWNLOAD ON
             LOG_CONFIGURE ON
             LOG_BUILD ON
-            BUILD_BYPRODUCTS "${mme_build_dir}/lib/libmme_stack.a ${mme_build_dir}/lib/libmme_reference.a ${mme_build_dir}/lib/libfma.a"
+            BUILD_BYPRODUCTS ${mme_build_dir}/lib/libmme_stack.a
+                             ${mme_build_dir}/lib/libmme_reference.a
+                             ${mme_build_dir}/lib/libfma.a
         )
     endif()
 

@@ -25,6 +25,7 @@ public:
     virtual std::string getPacketIndexDesc() const override;
 
 private:
+    using QmanCpInfo::reset;
     uint64_t m_cpDmaPacketIndex = std::numeric_limits<uint64_t>::max();
 
     static const unsigned INDENTATION_SIZE               = 8;

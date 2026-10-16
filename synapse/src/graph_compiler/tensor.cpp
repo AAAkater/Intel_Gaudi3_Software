@@ -183,6 +183,9 @@ Tensor::Tensor(const Tensor& t, bool copyAddresses /*false*/, bool copyData /*tr
   m_isInt16Limited(t.m_isInt16Limited),
   m_isSparsityWeights(t.m_isSparsityWeights),
   m_lockProps(t.m_lockProps),
+  m_isExternal(t.m_isExternal),
+  m_isMemoryReusable(t.m_isMemoryReusable),
+  m_minimalLatency(t.m_minimalLatency),
   m_twinHost2DeviceTensor(t.m_twinHost2DeviceTensor),
   m_permutation(t.m_permutation)
 {
@@ -1687,6 +1690,7 @@ std::shared_ptr<Tensor> Tensor::clone(bool                  copyAddresses /*fals
         pClone->setMemorySectionID(MEMORY_ID_RESERVED_FOR_WORKSPACE);
         pClone->m_outputState                                 = IOClassification::AUTO;
         pClone->getTensorAnnotation().memory.allowPermutation = false;
+        pClone->m_isMemoryReusable                            = false;
     }
 
     // the new tensor has no one aliased to him, so make sure to reset this annotation.
@@ -1792,6 +1796,7 @@ void Tensor::setAsNonUserManaged()
 {
     m_memoryDescriptor.m_isPersistent = false;
     m_isExternal                      = false;
+    m_isMemoryReusable                = false;
     if (!getTensorAnnotation().nonPersistentSectionInfo.bufferingLevel.is_set())
     {
         getTensorAnnotation().nonPersistentSectionInfo.sectionId.unset();
@@ -2042,6 +2047,12 @@ bool Tensor::isPropsValid()
     if (m_isExternal && !isPersistent())
     {
         LOG_ERR(SYN_API, "Tensor {} cannot be marked as external event tensor without being persistent.", m_name);
+        return false;
+    }
+
+    if (m_isMemoryReusable && !isPersistent())
+    {
+        LOG_ERR(SYN_API, "Tensor {} cannot be marked as reusable without being persistent.", m_name);
         return false;
     }
 

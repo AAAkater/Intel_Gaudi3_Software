@@ -35,6 +35,16 @@ static gc::ops::OpValidationContext sharedLayerParamsToOpValidationContext(const
     return ovc;
 }
 
+static gc::ops::OpValidationContext sharedLayerParamsToOpValidationContext(const SharedLayer::ParamsV2_t* pParams)
+{
+    auto ovc = sharedLayerParamsToOpValidationContext(static_cast<const SharedLayer::Params_t*>(pParams));
+    if (!pParams) return ovc;
+    ovc.setSupportsDynamicShapes(pParams->supportsDynamicShapes != 0);
+    ovc.setRequiresShapeTensor(pParams->requiresShapeTensor != 0);
+    ovc.setRequiresH2DTensor(pParams->requiresH2DTensor != 0);
+    return ovc;
+}
+
 static SharedLayer::Return_t toSharedLayerReturnType(const gc::ops::ValidationResult& gcSharedLayerRc)
 {
     using gc::ops::ValidationResult;
@@ -60,6 +70,14 @@ static SharedLayer::Return_t toSharedLayerReturnType(const gc::ops::ValidationRe
             return Return_t::SHARED_LAYER_INCOMPATIBLE_OUTPUT_SIZE;
         case ValidationResult::INCOMPATIBLE_DATA_TYPE:
             return Return_t::SHARED_LAYER_INCOMPATIBLE_DATA_TYPE;
+        case ValidationResult::GUID_MISSING_DYNAMIC_SUPPORT:
+            return Return_t::SHARED_LAYER_GUID_MISSING_DYNAMIC_SUPPORT;
+        case ValidationResult::GUID_HAS_NO_SHAPE_TENSOR_INPUT:
+            return Return_t::SHARED_LAYER_GUID_HAS_NO_SHAPE_TENSOR_INPUT;
+        case ValidationResult::GUID_HAS_NO_H2D_TENSOR_INPUT:
+            return Return_t::SHARED_LAYER_GUID_HAS_NO_H2D_TENSOR_INPUT;
+        case ValidationResult::DS_NDIMS_NOT_SUPPORTED:
+            return Return_t::SHARED_LAYER_DS_NDIMS_NOT_SUPPORTED;
         default:
             LOG_ERR(GC_SHARED_LAYER, "{}: Failed translating gc shared layer enum {}", HLLOG_FUNC, gcSharedLayerRc);
         // intentional fall-through
@@ -97,6 +115,53 @@ GCSL_C_API SharedLayer::Return_t HLSL_validate_guid(_IN_ const SharedLayer::Para
         auto        testedOpCtx = sharedLayerParamsToOpValidationContext(params);
         const auto  rc          = gc::ops::OpValidator::validateOp(guid, testedOpCtx, deviceType);
         sharedLayerRc           = toSharedLayerReturnType(rc);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERR(GC_SHARED_LAYER, "{}: Failed with exception: {}", HLLOG_FUNC, e.what());
+        sharedLayerRc = SharedLayer::SHARED_LAYER_FAILED;
+    }
+    return sharedLayerRc;
+}
+
+GCSL_C_API SharedLayer::Return_t HLSL_validate_guidV2(_IN_ const SharedLayer::ParamsV2_t* const params)
+{
+    auto sharedLayerRc = SharedLayer::SHARED_LAYER_SUCCESS;
+    try
+    {
+        HB_ASSERT_PTR(params);
+
+        const auto  deviceType = deviceIDToDeviceType(params->deviceId);
+        std::string guid(params->guid.name);
+        auto        testedOpCtx = sharedLayerParamsToOpValidationContext(params);
+        const auto  rc          = gc::ops::OpValidator::validateOp(
+            guid, testedOpCtx, deviceType, gc::ops::ValidationVersion::V2);
+        sharedLayerRc = toSharedLayerReturnType(rc);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERR(GC_SHARED_LAYER, "{}: Failed with exception: {}", HLLOG_FUNC, e.what());
+        sharedLayerRc = SharedLayer::SHARED_LAYER_FAILED;
+    }
+    return sharedLayerRc;
+}
+
+GCSL_C_API SharedLayer::Return_t HLSL_query_guid(_IN_ const SharedLayer::QueryParams_t* const params)
+{
+    auto sharedLayerRc = SharedLayer::SHARED_LAYER_SUCCESS;
+    try
+    {
+        HB_ASSERT_PTR(params);
+        HB_ASSERT_PTR(params->resultBitMap);
+
+        const auto  deviceType = deviceIDToDeviceType(params->deviceId);
+        std::string guid(params->guid.name);
+        auto        testedOpCtx = sharedLayerParamsToOpValidationContext(
+            static_cast<const SharedLayer::ParamsV2_t*>(params));
+        testedOpCtx.setQuery(params->queryBitMap, params->resultBitMap);
+        const auto rc = gc::ops::OpValidator::validateOp(
+            guid, testedOpCtx, deviceType, gc::ops::ValidationVersion::QUERY);
+        sharedLayerRc = toSharedLayerReturnType(rc);
     }
     catch (const std::exception& e)
     {

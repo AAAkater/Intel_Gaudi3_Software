@@ -2290,6 +2290,13 @@ GlobalConfBool GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE(
     MakePrivate
 );
 
+GlobalConfBool GCFG_ENABLE_PERSISTENT_INPUT_REUSE(
+    "ENABLE_PERSISTENT_INPUT_REUSE",
+    "Enable explicitly marked persistent input reuse after its final consumer",
+    DfltBool(true),
+    MakePrivate
+);
+
 GlobalConfBool GCFG_ENABLE_FUSE_IDENTITY_TRANSPOSE_INTO_MME(
         "ENABLE_FUSE_IDENTITY_TRANSPOSE_INTO_MME",
         "Enable fusing transpose into mme when identity node is in between",

@@ -82,7 +82,14 @@ namespace gaudi
 
         bool operator()(const NodePtr& n1, const NodePtr& n2) const
         {
-            return compareBundlePriority(n1,n2).value_or(compareNodeId(n1, n2));
+            const auto bundlePriority = compareBundlePriority(n1, n2);
+            if (bundlePriority.has_value()) return bundlePriority.value();
+
+            const bool n1MinimalLatency = n1->producesMinimalLatencyTensor();
+            const bool n2MinimalLatency = n2->producesMinimalLatencyTensor();
+            if (n1MinimalLatency != n2MinimalLatency) return n1MinimalLatency;
+
+            return compareNodeId(n1, n2);
         }
     }; //NodeScheduleComparator
     }  // namespace gaudi

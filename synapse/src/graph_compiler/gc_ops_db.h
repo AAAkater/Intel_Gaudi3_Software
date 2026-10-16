@@ -60,7 +60,10 @@ struct OpInfo
       operandTypeGroups(typeGroups),
       isVaryingNumInput(isVaryingNumInputs),
       isVaryingNumOutput(isVaryingNumOutputs),
-      optionalCustomValidation(optionalCustomValidation)
+      optionalCustomValidation(optionalCustomValidation),
+      supportsDynamicShapes(true),
+      supportsShapeTensorInput(false),
+      supportsH2DTensorInput(false)
     {
     }
 
@@ -74,6 +77,9 @@ struct OpInfo
     bool                              isVaryingNumInput;
     bool                              isVaryingNumOutput;
     std::optional<ValidationFunction> optionalCustomValidation;
+    bool                              supportsDynamicShapes;
+    bool                              supportsShapeTensorInput;
+    bool                              supportsH2DTensorInput;
 };
 
 class GCOpsDB final
@@ -120,7 +126,10 @@ private:
                                                                                 synDeviceGaudi3};
 
     GCOpsDB();
-    void registerOp(const std::string& guid, const DeviceTypeToOpInfoMap& opInfoMap);
+    void registerOp(const std::string&          guid,
+                    const DeviceTypeToOpInfoMap& opInfoMap,
+                    bool                        supportsShapeTensorInput = false,
+                    bool                        supportsH2DTensorInput   = false);
     void initSupportedGuidsSet();
 };
 }  // namespace gc::ops

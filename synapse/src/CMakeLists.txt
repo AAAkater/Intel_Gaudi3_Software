@@ -67,19 +67,16 @@ if (SHOULD_REBUILD_PROTOC)
     file(MAKE_DIRECTORY ${ProtobufSrcDir})
     execute_process(COMMAND cp -r $ENV{THIRD_PARTIES_ROOT}/protobuf-3.9.x/. ${ProtobufSrcDir}/.)
 
-    # we need to either touch these files, or re-run autotools from scratch (which takes a couple of minutes)
-    # if we do neither, then configure will fail on machines with a newer version of autotools (e.g. Ubuntu 20)
-    # the touch command should be sufficient because the source is already autotool-ized
-    execute_process(COMMAND touch ${ProtobufSrcDir}/aclocal.m4 ${ProtobufSrcDir}/Makefile.am ${ProtobufSrcDir}/Makefile.in)
-
-    # configure
+    # The source snapshot does not preserve executable bits for autotools scripts.
+    # Use the bundled CMake build, retaining the required protobuf 3.9.0 sources.
+    set(ProtobufCmakeBuildDir ${ProtobufBuildDir}/cmake-build)
     message("Configuring Protobuf...")
-    if (CCACHE_PROGRAM)
-        set(ENV{CC} "${CCACHE_PROGRAM} ${CMAKE_C_COMPILER}")
-        set(ENV{CXX} "${CCACHE_PROGRAM} ${CMAKE_CXX_COMPILER}")
-    endif()
-    set(ENV{CXXFLAGS} "-fPIC -fvisibility=hidden -fvisibility-inlines-hidden")
-    set(NextCmd ./configure --prefix=${ProtobufBuildDir} --disable-shared)
+    set(NextCmd ${CMAKE_COMMAND} -S ${ProtobufSrcDir}/cmake -B ${ProtobufCmakeBuildDir}
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${ProtobufBuildDir}
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON -Dprotobuf_BUILD_TESTS=OFF
+        -Dprotobuf_BUILD_SHARED_LIBS=OFF -Dprotobuf_WITH_ZLIB=OFF
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+        "-DCMAKE_CXX_FLAGS=-fvisibility=hidden -fvisibility-inlines-hidden")
     execute_process(COMMAND ${NextCmd}
             WORKING_DIRECTORY ${ProtobufSrcDir}
             RESULT_VARIABLE   CmdRes
@@ -93,7 +90,7 @@ if (SHOULD_REBUILD_PROTOC)
     message("Making Protobuf...")
     include(ProcessorCount)
     ProcessorCount(NProc)
-    set(NextCmd make -j${NProc})
+    set(NextCmd ${CMAKE_COMMAND} --build ${ProtobufCmakeBuildDir} --parallel ${NProc})
     execute_process(COMMAND ${NextCmd}
             WORKING_DIRECTORY ${ProtobufSrcDir}
             RESULT_VARIABLE   CmdRes
@@ -105,7 +102,7 @@ if (SHOULD_REBUILD_PROTOC)
 
     # make install
     message("Installing Protobuf...")
-    set(NextCmd make install)
+    set(NextCmd ${CMAKE_COMMAND} --install ${ProtobufCmakeBuildDir})
     execute_process(COMMAND ${NextCmd}
             WORKING_DIRECTORY ${ProtobufSrcDir}
             RESULT_VARIABLE   CmdRes
@@ -124,9 +121,9 @@ if (SHOULD_REBUILD_PROTOC)
     endforeach()
 endif()
 
-include_directories(${ProtobufBuildDir}/include
-                    ${ProtobufBuildDir}/include/google/protobuf
-                    $ENV{SYNAPSE_ROOT}/include/internal/
+include_directories(SYSTEM ${ProtobufBuildDir}/include
+                           ${ProtobufBuildDir}/include/google/protobuf)
+include_directories($ENV{SYNAPSE_ROOT}/include/internal/
                     $ENV{SPECS_ROOT_H9}
                     $ENV{SPECS_ROOT}
                     $ENV{SPECS_EXT_ROOT}
@@ -149,6 +146,8 @@ include_directories(${ProtobufBuildDir}/include
                     ${CMAKE_CURRENT_BINARY_DIR})
 
 #build DFA read registers
+option(SYNAPSE_DFA_REGISTER_DUMP "Build register dump tables for device failure analysis" ON)
+if(SYNAPSE_DFA_REGISTER_DUMP)
 add_custom_command(
         OUTPUT
             ${CMAKE_CURRENT_BINARY_DIR}/dfa_read_gaudi_regs.hpp
@@ -161,6 +160,15 @@ add_custom_command(
             $ENV{SPECS_ROOT_H9}/gaudi3/all_regs.txt
             $ENV{SYNAPSE_ROOT}/src/runtime/scripts/dfa_regs_list.py
         VERBATIM)
+else()
+    message(WARNING "DFA register scans are disabled in this research build; no register addresses are inferred")
+    foreach(device Gaudi Gaudi2 Gaudi3)
+        string(TOLOWER ${device} device_lower)
+        file(GENERATE
+            OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/dfa_read_${device_lower}_regs.hpp
+            CONTENT "#pragma once\n#include <vector>\n#include \"runtime/common/device/dfa_base.hpp\"\ninline const std::vector<RegsBlock> regsToRead${device} = {};\n")
+    endforeach()
+endif()
 
 # Create the protobuf source files
 # Must be before the file group command below

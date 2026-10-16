@@ -100,6 +100,49 @@ public:
     virtual synStatus eventQuery(const EventInterface* eventInterface)      = 0;
     virtual synStatus synchronizeStream(const synStreamHandle streamHandle) = 0;
 
+    virtual synStatus nativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                               synStreamHandle              streamHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                                       uint64_t                      segmentIndex,
+                                                       const synNativeGraphSyncInfo* dependency,
+                                                       uint8_t                       submit,
+                                                       synNativeGraphSyncInfo*       completion)
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                                synNativeComputeGraphInfo*   graphInfo) const
+    {
+        return synUnsupported;
+    }
+    virtual synStatus nativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle)
+    {
+        return synUnsupported;
+    }
+
     virtual synStatus createEvent(synEventHandle* pEventHandle, const unsigned int flags) = 0;
 
     virtual synStatus destroyEvent(synEventHandle eventHandle) = 0;

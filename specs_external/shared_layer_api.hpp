@@ -18,22 +18,36 @@ namespace SharedLayer
 
     typedef enum
     {
-        SHARED_LAYER_SUCCESS                         = 0,
-        SHARED_LAYER_GUID_NOT_FOUND                  = 1,
-        SHARED_LAYER_INCOMPATIBLE_INPUT_COUNT        = 2,
-        SHARED_LAYER_INCOMPATIBLE_INPUT_DIMENSION    = 3,
-        SHARED_LAYER_INCOMPATIBLE_INPUT_SIZE         = 4,
-        SHARED_LAYER_INCOMPATIBLE_OUTPUT_COUNT       = 5,
-        SHARED_LAYER_INCOMPATIBLE_OUTPUT_DIMENSION   = 6,
-        SHARED_LAYER_INCOMPATIBLE_OUTPUT_SIZE        = 7,
-        SHARED_LAYER_INCOMPATIBLE_DATA_TYPE          = 8,
-        SHARED_LAYER_UNSUPPORTED_LAYER_CONFIGURATION = 9,
-        SHARED_LAYER_UNSUPPORTED_QUANT_PARAMS        = 10,
-        SHARED_LAYER_UNSUPPORTED_BROADCAST_MODE      = 11,
-        SHARED_LAYER_KERNEL_INVALID_SCALAR_ARGUMENT  = 12,
-        SHARED_LAYER_MISSING_PRIVATE_STRUCTURE       = 13,
-        SHARED_LAYER_FAILED                          = -1,
+        SHARED_LAYER_SUCCESS                                = 0,
+        SHARED_LAYER_GUID_NOT_FOUND                         = 1,
+        SHARED_LAYER_INCOMPATIBLE_INPUT_COUNT               = 2,
+        SHARED_LAYER_INCOMPATIBLE_INPUT_DIMENSION           = 3,
+        SHARED_LAYER_INCOMPATIBLE_INPUT_SIZE                = 4,
+        SHARED_LAYER_INCOMPATIBLE_OUTPUT_COUNT              = 5,
+        SHARED_LAYER_INCOMPATIBLE_OUTPUT_DIMENSION          = 6,
+        SHARED_LAYER_INCOMPATIBLE_OUTPUT_SIZE               = 7,
+        SHARED_LAYER_INCOMPATIBLE_DATA_TYPE                 = 8,
+        SHARED_LAYER_UNSUPPORTED_LAYER_CONFIGURATION        = 9,
+        SHARED_LAYER_UNSUPPORTED_QUANT_PARAMS               = 10,
+        SHARED_LAYER_UNSUPPORTED_BROADCAST_MODE             = 11,
+        SHARED_LAYER_KERNEL_INVALID_SCALAR_ARGUMENT         = 12,
+        SHARED_LAYER_MISSING_PRIVATE_STRUCTURE              = 13,
+        SHARED_LAYER_GUID_MISSING_DYNAMIC_SUPPORT           = 14,
+        SHARED_LAYER_GUID_HAS_NO_SHAPE_TENSOR_INPUT         = 15,
+        SHARED_LAYER_GUID_HAS_NO_H2D_TENSOR_INPUT           = 16,
+        SHARED_LAYER_DS_NDIMS_NOT_SUPPORTED                 = 17,
+        SHARED_LAYER_FAILED                                 = -1,
     } Return_t;
+
+    typedef enum
+    {
+        QUERY_NUM_OPERANDS      = 1 << 0,
+        QUERY_RANK              = 1 << 1,
+        QUERY_DATATYPES         = 1 << 2,
+        QUERY_DYN_SHAPE_SUPPORT = 1 << 3,
+        QUERY_SHAPE_TENSOR_REQ  = 1 << 4,
+        QUERY_H2D_TENSOR_REQ    = 1 << 5,
+    } Queries_t;
 
     typedef struct{
         int                           apiVersion;
@@ -45,6 +59,17 @@ namespace SharedLayer
         Tensor*                       outputTensors;
         unsigned                      outputTensorNr;
     }Params_t;
+
+    typedef struct _ParamsV2_t : public Params_t{
+        unsigned                      supportsDynamicShapes = 0;
+        unsigned                      requiresShapeTensor = 0;
+        unsigned                      requiresH2DTensor = 0;
+    }ParamsV2_t;
+
+    typedef struct _QueryParams_t : public _ParamsV2_t{
+        unsigned  queryBitMap = 0;
+        unsigned* resultBitMap = 0;
+    }QueryParams_t;
 
 }; // namespace SharedLayer
 

@@ -15,6 +15,7 @@
 #ifndef IRT_H_
 #define IRT_H_
 
+#include <cstdint>
 #include <queue>
 #include <string>
 #include <vector>

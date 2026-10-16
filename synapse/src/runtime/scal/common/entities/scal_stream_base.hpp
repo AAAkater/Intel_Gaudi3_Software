@@ -6,6 +6,10 @@
 #include "runtime/scal/common/entities/scal_monitor.hpp"
 #include "scal_internal/pkt_macros.hpp"
 
+#include <cstdint>
+#include <vector>
+#include "runtime/scal/common/native_compute_program.hpp"
+
 class ScalStreamBase : virtual public ScalStreamCopyInterface
 {
 public:
@@ -61,6 +65,31 @@ public:
     bool isComputeStream() override { return m_resourceType == ResourceStreamType::COMPUTE; };
 
     synStatus init();
+
+    // Native decode-graph research path. Capture stores the exact scheduler
+    // packets emitted by a normal cold launch. Replay copies those packets to
+    // the live CCB, while the CCB continues to own alignment, ring wrap and
+    // space reclamation. Completion-group accounting is replayed explicitly;
+    // copying packet bytes alone would leave SCAL's expected counters stale.
+    synStatus beginNativeCommandCapture();
+    synStatus endNativeCommandCapture(NativeScalCommandBuffer& commandBuffer);
+    synStatus cancelNativeCommandCapture();
+    synStatus replayNativeCommands(const NativeScalCommandBuffer& commandBuffer,
+                                   bool                           preserveCapturedSubmissions,
+                                   bool                           submitLastCommand,
+                                   ScalLongSyncObject&            completion);
+    void noteNativeCompletionIncrementsBeforeCommands(uint64_t increments);
+    std::vector<NativeComputeWaitPacket> prepareNativeWaitPackets(uint32_t longSoIndex);
+    bool nativeTerminalRelease(const NativeScalCommandBuffer& commands) const;
+    uint32_t nativeCommandAlignment() const { return m_cmdAlign; }
+    uint64_t nativeAvailableBytes() const;
+    synStatus publishNativeComputeProgram(const NativeComputeProgram& program,
+                                         const synNativeGraphSyncInfo* completions,
+                                         const ScalLongSyncObject& base,
+                                         std::vector<CommandSubmissionData>& submissionScratch,
+                                         uint64_t& submissions);
+
+    bool isNativeCommandCaptureActive() const { return m_nativeCommandCaptureActive; }
 
     uint64_t getStreamCyclicBufferOccupancyWatermark() { return getStreamCyclicBuffer()->getStreamCyclicBufferOccupancyWatermark(); };
 
@@ -131,6 +160,9 @@ protected:
     const DevStreamInfo& m_devStreamInfo;
     uint32_t m_workCompletionValue;
 
+    bool                    m_nativeCommandCaptureActive = false;
+    NativeScalCommandBuffer m_nativeCommandCapture;
+
 private:
     const scal_handle_t  m_devHndl;
     const uint32_t       m_streamIdx;
@@ -199,11 +231,36 @@ synStatus ScalStreamBase::addPacketCommon(bool send, size_t cmdSize, Args&&... a
 template<class TPacketBuildFunc>
 synStatus ScalStreamBase::addCmd(uint32_t cmdSize, bool send, TPacketBuildFunc packetBuildFunc)
 {
+    std::vector<uint8_t> capturedBytes;
+    auto commandBuilder = [&](uint8_t* buffer) {
+        packetBuildFunc(buffer);
+        if (m_nativeCommandCaptureActive)
+        {
+            capturedBytes.assign(buffer, buffer + cmdSize);
+        }
+    };
+
     std::vector<CommandSubmissionData> commandSubmissionDataList(2, {0, 0, nullptr, false});
-    synStatus status = getStreamCyclicBuffer()->addCommand(cmdSize, send, packetBuildFunc, commandSubmissionDataList);
+    synStatus status =
+        getStreamCyclicBuffer()->addCommand(cmdSize, send, commandBuilder, commandSubmissionDataList);
     if (status != synSuccess)
     {
         return status;
+    }
+
+    if (m_nativeCommandCaptureActive)
+    {
+        if (capturedBytes.size() != cmdSize)
+        {
+            LOG_ERR(SYN_STREAM,
+                    "stream {} failed to capture native command: expected {} bytes, captured {}",
+                    m_name,
+                    cmdSize,
+                    capturedBytes.size());
+            return synFail;
+        }
+        m_nativeCommandCapture.commands.push_back(
+            {.bytes = std::move(capturedBytes), .submittedDuringCapture = send});
     }
 
     for (auto& commandSubmissionDataElement : commandSubmissionDataList)

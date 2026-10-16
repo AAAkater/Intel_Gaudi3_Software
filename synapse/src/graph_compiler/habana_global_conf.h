@@ -138,6 +138,7 @@ extern GlobalConfUint64    GCFG_SYNAPSE_MLIR_MODE;
 extern GlobalConfFloat     GCFG_WORKSPACE_EPOCH_SIZE_PERCISION;
 extern GlobalConfSize      GCFG_WORKSPACE_MIN_SIZE_LIMIT;
 extern GlobalConfBool      GCFG_ENABLE_PERSISTENT_OUTPUT_REUSE;
+extern GlobalConfBool      GCFG_ENABLE_PERSISTENT_INPUT_REUSE;
 extern GlobalConfBool      GCFG_ENABLE_BIG_TENSOR_PP_PRUNE;
 extern GlobalConfUint64    GCFG_MAX_CONST_TENSOR_SIZE_BYTES;
 extern GlobalConfUint64    GCFG_HBM_GLOBAL_MEM_SIZE_MEGAS;

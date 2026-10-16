@@ -12,14 +12,15 @@
 #include "types_exception.h"
 #include "log_manager.h"
 #include "api_calls_counter.hpp"
+#include "runtime/common/error_message.hpp"
 
 static synStatus handleException(const char* function)
 {
     (void)handleException;  // unused
     try { throw; }
-    catch (const SynapseStatusException& e) { LOG_CRITICAL(SYN_API, "exception thrown in function: {}, what: {}", function, e.what()); return e.status(); }
-    catch (const std::exception& e)         { LOG_CRITICAL(SYN_API, "exception thrown in function: {}, what: {}", function, e.what()); return synFail; }
-    catch (...)                             { LOG_CRITICAL(SYN_API, "exception thrown in function: {}", function); return synFail; }
+    catch (const SynapseStatusException& e) { LOG_CRITICAL(SYN_API, "exception thrown in function: {}, what: {}", function, e.what()); synapse::api_error::set(e.status(), function, e.what()); return e.status(); }
+    catch (const std::exception& e)         { LOG_CRITICAL(SYN_API, "exception thrown in function: {}, what: {}", function, e.what()); synapse::api_error::set(synFail, function, e.what()); return synFail; }
+    catch (...)                             { LOG_CRITICAL(SYN_API, "exception thrown in function: {}", function); synapse::api_error::set(synFail, function, "Unknown exception"); return synFail; }
     return synFail;
 }
 
@@ -43,22 +44,26 @@ static synStatus handleException(const char* function)
         {                                                                                                              \
             LOG_DEBUG(SYN_API, "postApiCall failed in function: {}", HLLOG_FUNC);                                      \
             LOG_SYN_API("postApiCall failed. status: {}", postApiCallStatus);                                          \
+            synapse::api_error::set(postApiCallStatus, __FUNCTION__);                                                   \
             return postApiCallStatus;                                                                                  \
         }                                                                                                              \
         uint64_t diff = TimeTools::timeFromNs(startTime);                                                              \
         synSingleInternal->collectStat(StatApiPoints::stat, diff);                                                     \
     }                                                                                                                  \
+    synapse::api_error::set(status, __FUNCTION__);                                                                      \
     return status;                                                                                                     \
     }                                                                                                                  \
     catch (...) { return handleException(__FUNCTION__); }
 
 #define API_ENTRY_STATUS()                                                                                             \
+    synapse::api_error::reset();                                                                                       \
     try                                                                                                                \
     {                                                                                                                  \
         synStatus status = _SYN_SINGLETON_INTERNAL->preApiCallExecution(__FUNCTION__);                                 \
         if (status != synSuccess)                                                                                      \
         {                                                                                                              \
             LOG_DEBUG(SYN_API, "preApiCall failed in function: {}", HLLOG_FUNC);                                       \
+            synapse::api_error::set(status, __FUNCTION__);                                                             \
             return status;                                                                                             \
         }
 
@@ -67,20 +72,24 @@ static synStatus handleException(const char* function)
     if (postApiCallStatus != synSuccess)                                                                               \
     {                                                                                                                  \
         LOG_DEBUG(SYN_API, "postApiCall failed in function: {}", HLLOG_FUNC);                                          \
+        synapse::api_error::set(postApiCallStatus, __FUNCTION__);                                                       \
         return postApiCallStatus;                                                                                      \
     }                                                                                                                  \
+    synapse::api_error::set(status, __FUNCTION__);                                                                      \
     return status;                                                                                                     \
     }                                                                                                                  \
     catch (...) { return handleException(__FUNCTION__); }
 
 // Status specific entry-exit calls are used for APIs which requires a speicific return value upon verification failure
 #define API_ENTRY_SPECIFIC(failureStatus)                                                                              \
+    synapse::api_error::reset();                                                                                       \
     try                                                                                                                \
     {                                                                                                                  \
         synStatus status = _SYN_SINGLETON_INTERNAL->preApiCallExecution(__FUNCTION__);                                 \
         if (status != synSuccess)                                                                                      \
         {                                                                                                              \
             LOG_DEBUG(SYN_API, "preApiCall failed in function: {}", HLLOG_FUNC);                                       \
+            synapse::api_error::set(status, __FUNCTION__);                                                             \
             return failureStatus;                                                                                      \
         }
 
@@ -89,6 +98,7 @@ static synStatus handleException(const char* function)
     if (postApiCallStatus != synSuccess)                                                                               \
     {                                                                                                                  \
         LOG_DEBUG(SYN_API, "postApiCall failed in function: {}", HLLOG_FUNC);                                          \
+        synapse::api_error::set(postApiCallStatus, __FUNCTION__);                                                       \
         return failReturn;                                                                                             \
     }                                                                                                                  \
     return status;                                                                                                     \

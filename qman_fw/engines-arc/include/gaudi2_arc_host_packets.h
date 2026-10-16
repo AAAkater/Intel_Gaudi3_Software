@@ -138,12 +138,43 @@ struct arc_fw_synapse_config_t {
 			/**<
 			 * Refer to arc_fw_sync_scheme_t
 			 */
+			uint16_t scale_up_send_signals;
+			/**<
+			 * Num completion signals from scaleup send cmds
+			 */
+			uint16_t scale_up_recv_signals;
+			/**<
+			 * Num completion signals from scaleup recv cmds
+			 */
+			uint16_t scale_out_send_signals;
+			/**<
+			 * Num completion signals from scaleout send cmds
+			 */
+			uint16_t scale_out_recv_signals;
+			/**<
+			 * Num completion signals from scaleout recv cmds
+			 */
+			uint16_t nic_edma_signals;
+			/**<
+			 * Num completion signals from nic edma cmds
+			 */
+			uint16_t reserved;
 		};
 		uint32_t synapse_params[ARC_FW_SYNAPSE_CONFIG_SIZE];
 	};
 };
 
 #define DCCM_QUEUE_COUNT	5
+
+enum {
+	COMP_SYNC_GROUP_COUNT = 16,
+	COMP_SYNC_GROUP_MAX_MON_GROUP_COUNT = 4
+};
+/**
+ * \struct  scheduler_config_t
+ * \brief   Scheduler configuration
+ * \details Configuration parameters related to a scheduler instance
+ */
 
 struct engine_config_t {
 	uint32_t version;
@@ -171,6 +202,12 @@ struct engine_config_t {
 	/**<
 	 * Monitor ID that should be used by this engine for back to back
 	 * execution
+	 */
+	uint32_t ext_sig_mon_start_id;
+	/*
+	 * Monitor start ID used for Ext signal monitor, Starting from here
+	 * 4 Mons are used by the engine (used as long monitor). This is used
+	 * to update EXT_SIG_FENCE
 	 */
 	uint32_t tpc_nop_kernel_addr_lo;
 	/**<
@@ -211,6 +248,13 @@ struct engine_config_t {
 	 * This is used for configuring the monitor which is used for
 	 * serializing compute workload
 	 */
+	uint32_t long_mon_wa_dummy_sob;
+	/**<
+	 * For long monitor, it is required to write one extra dummy message
+	 * (as w/a for SM bug H6-3342)
+	 * So this dummy message will be written to long_mon_wa_dummy_sob.
+	 * It is fixed for gaudi3.
+	 */
 	uint32_t cmpt_csg_sob_id_count;
 	/**<
 	 * Total SOB count used in all compute completion groups
@@ -247,6 +291,19 @@ struct engine_config_t {
 	/*
 	 * CPU ID of EDMA slave. This is used to calculate fence addresses for
 	 * flow control between pm, sm and slave
+	 */
+	uint32_t watch_dog_sob_id[COMP_SYNC_GROUP_COUNT];
+	/**<
+	 * SOB ID to be incremented by any one engine
+	 * during the processing of Alloc Barrier command. One SOB per
+	 * Completion Group
+	 */
+	uint32_t ports_per_rank;
+	/**<
+	 * Number of ports in one rank of this engine config
+	 * each engine has its own configuration. So, scaleup
+	 * and scaleout eninges can have different values for
+	 * this field
 	 */
 };
 
@@ -321,19 +378,24 @@ struct comp_sync_group_config_t {
 
 #define SO_SET_COUNT				16
 #define NUM_SOS_PER_SO_SET			128
-#define SOB_OFFSET_MME_IN_SO_SET		0
-#define SOB_OFFSET_TPC_IN_SO_SET		16
-#define SOB_OFFSET_EDMA_IN_SO_SET		80
-#define SOB_OFFSET_ROT_IN_SO_SET		96
-#define SOB_OFFSET_DEBUG_IN_SO_SET		112
-#define SOB_OFFSET_SEMAPHORE_SO_SET	120
 
-#define SOB_COUNT_MME_IN_SO_SET			16
-#define SOB_COUNT_TPC_IN_SO_SET			64
-#define SOB_COUNT_EDMA_IN_SO_SET		16
-#define SOB_COUNT_ROT_IN_SO_SET			16
-#define SOB_COUNT_DEBUG_IN_SO_SET		8
-#define SOB_COUNT_SEMAPHORE_SO_SET		8
+enum {
+	SOB_OFFSET_MME_IN_SO_SET = 0,
+	SOB_OFFSET_TPC_IN_SO_SET = 16,
+	SOB_OFFSET_EDMA_IN_SO_SET = 80,
+	SOB_OFFSET_ROT_IN_SO_SET = 96,
+	SOB_OFFSET_DEBUG_IN_SO_SET = 112,
+	SOB_OFFSET_SEMAPHORE_SO_SET = 120
+};
+
+enum {
+	SOB_COUNT_MME_IN_SO_SET = 16,
+	SOB_COUNT_TPC_IN_SO_SET = 64,
+	SOB_COUNT_EDMA_IN_SO_SET = 16,
+	SOB_COUNT_ROT_IN_SO_SET = 16,
+	SOB_COUNT_DEBUG_IN_SO_SET = 8,
+	SOB_COUNT_SEMAPHORE_SO_SET = 8
+};
 
 struct so_set_config_t {
 	uint32_t sob_start_id;
@@ -412,15 +474,6 @@ struct sched_engine_group_config_t {
 	 */
 };
 
-enum {
-	COMP_SYNC_GROUP_COUNT = 16,
-	COMP_SYNC_GROUP_MAX_MON_GROUP_COUNT = 4
-};
-/**
- * \struct  scheduler_config_t
- * \brief   Scheduler configuration
- * \details Configuration parameters related to a scheduler instance
- */
 struct scheduler_config_t {
 	uint32_t version;
 	/**<

@@ -637,7 +637,7 @@ void CommandQueue::pushAdditionalDynamicCmds4sfg(const NodePtr& node, unsigned p
     {
         // create sfg command and push to queue
         unsigned sfgSobInc = node->getNodeAnnotation().sfgSyncObjValue.value();
-        PushBack(std::move(m_commandFactory.getSfgInc(sfgSobInc)), false);
+        PushBack(m_commandFactory.getSfgInc(sfgSobInc), false);
         LOG_DEBUG(SFG, "Adding SFG cmd (sfgSobInc value={}) to {}", sfgSobInc, node->getNodeName());
     }
 }
@@ -650,7 +650,7 @@ void CommandQueue::pushAdditionalDynamicCmds4mcidRollover(const NodePtr& node, u
     for (unsigned rolloverId : itrRoi->rolloverIds)
     {
         unsigned sobTargetVal = node->getNodeAnnotation().arcSyncScheme[pipeLevel].emittedSigVal.value();
-        PushBack(std::move(m_commandFactory.getMcidRollover(sobTargetVal)), false);
+        PushBack(m_commandFactory.getMcidRollover(sobTargetVal), false);
         LOG_DEBUG(CACHE_MAINT, "Adding mcid rollover cmd (rolloverId={}) to {}", rolloverId, getName());
     }
 }
@@ -664,7 +664,7 @@ void CommandQueue::pushAdditionalDynamicCmds4sobReset(const pNode& node, unsigne
         // create ResetSobs command and push to queue
         unsigned sobTargetVal = node->getNodeAnnotation().arcSyncScheme[pipeLevel].emittedSigVal.value();
         unsigned totalNumEngs = node->getNodeAnnotation().arcSyncScheme[pipeLevel].sobResetTotalNumEngs;
-        PushBack(std::move(m_commandFactory.getResetSobs(sobTargetVal, totalNumEngs)), false);
+        PushBack(m_commandFactory.getResetSobs(sobTargetVal, totalNumEngs), false);
     }
 }
 

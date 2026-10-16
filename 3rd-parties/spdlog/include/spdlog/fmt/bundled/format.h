@@ -440,12 +440,19 @@ void basic_buffer<T>::append(const U *begin, const U *end) {
 }  // namespace internal
 
 // A UTF-8 code unit type.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10 && __cplusplus < 202002L
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++20-compat"
+#endif
 struct char8_t {
   char value;
   FMT_CONSTEXPR explicit operator bool() const FMT_NOEXCEPT {
     return value != 0;
   }
 };
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 10 && __cplusplus < 202002L
+#pragma GCC diagnostic pop
+#endif
 
 // A UTF-8 string view.
 class u8string_view : public basic_string_view<char8_t> {

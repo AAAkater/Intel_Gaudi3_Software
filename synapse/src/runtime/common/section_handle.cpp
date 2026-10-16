@@ -26,7 +26,14 @@ bool InternalSectionHandle::setRMW(bool isRMW)
 
 bool InternalSectionHandle::setSectionHandle(synSectionHandle sectionHandle)
 {
-    return safeModify([&]() { m_sectionHandle = sectionHandle; }, __FUNCTION__);
+    // A graph clone inherits its locked section ID but receives a fresh slot.
+    // Initializing that slot identity must not unlock or modify its properties.
+    if (m_sectionHandle == nullptr)
+    {
+        m_sectionHandle = sectionHandle;
+        return true;
+    }
+    return m_sectionHandle == sectionHandle;
 }
 
 bool InternalSectionHandle::setIDAndLock(InternalSectionHandle::SectionIDType id)

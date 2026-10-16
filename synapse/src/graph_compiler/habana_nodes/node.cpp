@@ -82,6 +82,8 @@ Node::Node(const Node& other)
   m_paramsRawData(other.m_paramsRawData),
   m_deterministic(other.m_deterministic),
   m_roundingMode(other.m_roundingMode),
+  m_userExecOrder(other.m_userExecOrder),
+  m_userBundling(other.m_userBundling),
   m_originNodes(other.m_originNodes)
 
 {
@@ -110,6 +112,8 @@ Node& Node::operator=(const Node& other)
         m_deterministic            = other.m_deterministic;
         m_originNodes              = other.m_originNodes;
         m_roundingMode             = other.m_roundingMode;
+        m_userExecOrder            = other.m_userExecOrder;
+        m_userBundling             = other.m_userBundling;
         if (!other.hasNodeIOManagerSpecialization())
         {
             m_io = std::make_unique<NodeIOManager>(this);
@@ -117,6 +121,30 @@ Node& Node::operator=(const Node& other)
         m_parentId = other.m_parentId;
     }
     return *this;
+}
+
+void Node::setUserProgrammability(const synUserProgrammability& value)
+{
+    m_userExecOrder.reset();
+    m_userBundling.reset();
+
+    // Match the current API contract: execution-order metadata takes
+    // precedence when both pointers are supplied.
+    if (value.userExecOrder != nullptr)
+    {
+        m_userExecOrder = *value.userExecOrder;
+    }
+    else if (value.userBundling != nullptr)
+    {
+        m_userBundling = *value.userBundling;
+    }
+}
+
+bool Node::producesMinimalLatencyTensor() const
+{
+    return std::any_of(m_outputs.begin(), m_outputs.end(), [](const TensorPtr& tensor) {
+        return tensor != nullptr && tensor->isMinimalLatency();
+    });
 }
 
 void Node::replaceFirstTensor(const TensorPtr& oldTensor, const TensorPtr& newTensor)

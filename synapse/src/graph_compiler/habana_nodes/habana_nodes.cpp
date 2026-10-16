@@ -2554,14 +2554,9 @@ synStaticReshapeSifParams StaticReshapeNode::createParamsFromTensors(const Tenso
 {
     synStaticReshapeSifParams params = {{0}};
     params.dimsNum = output->getDim();
-    if (params.dimsNum > SIF_NUM_DIMS)
-    {
-        for (unsigned d = SIF_NUM_DIMS; d < params.dimsNum; d++)
-        {
-            HB_ASSERT(!output->isDynamicDim(d), "cannot support dynamic dim larger than {}", SIF_NUM_DIMS);
-        }
-        params.dimsNum = SIF_NUM_DIMS;
-    }
+    // The SIF arrays and TensorShape both hold at most HABANA_DIM_MAX dimensions.
+    // Inspecting dimensions beyond this bound would itself read out of bounds.
+    HB_ASSERT(params.dimsNum <= SIF_NUM_DIMS, "reshape rank exceeds {} dimensions", SIF_NUM_DIMS);
 
     for (unsigned i = 0; i < SIF_NUM_DIMS; i++)
     {

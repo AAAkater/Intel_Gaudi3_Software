@@ -8,6 +8,7 @@ namespace gaudi
 class EngineSelector : public gc::EngineSelector
 {
 private:
+    using gc::EngineSelector::visit;
     virtual void visit(TransposeNode* node) override;
 };
 

@@ -23,6 +23,7 @@
 
 #include "runtime/scal/common/entities/scal_completion_group.hpp"
 #include "runtime/scal/common/entities/scal_memory_pool.hpp"
+#include "runtime/scal/common/native_compute_graph_handle.hpp"
 
 #include "syn_event_dispatcher.hpp"
 
@@ -467,7 +468,14 @@ synStatus DeviceScal::release(std::atomic<bool>& rDeviceBeingReleased)
 
     LOG_TRACE_T(SYN_DEVICE, "{}", HLLOG_FUNC);
 
-    synStatus status = releaseAllStreams();
+    synStatus status = releaseAllNativeComputeGraphs();
+    if (status != synSuccess)
+    {
+        LOG_ERR_T(SYN_DEVICE, "{}: releaseAllNativeComputeGraphs returned synStatus {}.", HLLOG_FUNC, status);
+        return status;
+    }
+
+    status = releaseAllStreams();
     if (status != synSuccess)
     {
         LOG_ERR_T(SYN_DEVICE, "{}: releaseStreams returned synStatus {}.", HLLOG_FUNC, status);
@@ -831,6 +839,223 @@ void DeviceScal::removeFromStreamHandlesL(QueueInterface* pQueueInterface)
     {
         m_queueInterfaces.erase(it);
     }
+}
+
+synStatus DeviceScal::nativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                               synStreamHandle              streamHandle)
+{
+    CHECK_POINTER(SYN_DEVICE, graphHandle, "graphHandle", synInvalidArgument);
+    *graphHandle = nullptr;
+
+    auto stream = loadAndValidateStream(streamHandle, __FUNCTION__);
+    if (stream == nullptr)
+    {
+        return synInvalidArgument;
+    }
+
+    QueueInterface* queueInterface = nullptr;
+    stream->testGetQueueInterface(QUEUE_TYPE_COMPUTE, queueInterface);
+    auto* queue = dynamic_cast<QueueComputeScal*>(queueInterface);
+    if (queue == nullptr)
+    {
+        LOG_ERR(SYN_DEVICE, "Native compute graph requires an initialized SCAL compute queue");
+        return synUnsupported;
+    }
+
+    std::unique_ptr<NativeComputeGraph> graph = queue->createNativeComputeGraph();
+    if (graph == nullptr)
+    {
+        return synUnsupported;
+    }
+
+    auto* handle         = new InternalNativeComputeGraphHandle;
+    handle->queue        = queue;
+    handle->streamHandle = streamHandle;
+    handle->stream       = stream;
+    handle->graph        = std::move(graph);
+    {
+        std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+        m_nativeComputeGraphs.insert(handle);
+    }
+    *graphHandle = handle;
+    return synSuccess;
+}
+
+synStatus DeviceScal::nativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle)
+{
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    return graphHandle->queue->beginNativeComputeGraphCapture(*graphHandle->graph);
+}
+
+synStatus DeviceScal::nativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle)
+{
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    return graphHandle->queue->endNativeComputeGraphCapture(*graphHandle->graph);
+}
+
+synStatus DeviceScal::nativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle)
+{
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    return graphHandle->queue->abortNativeComputeGraphCapture(*graphHandle->graph);
+}
+
+synStatus DeviceScal::nativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle)
+{
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    return graphHandle->queue->replayNativeComputeGraph(*graphHandle->graph);
+}
+
+synStatus DeviceScal::nativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle)
+{
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    return graphHandle->queue->beginNativeComputeGraphReplay(*graphHandle->graph);
+}
+
+synStatus DeviceScal::nativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                                       uint64_t                      segmentIndex,
+                                                       const synNativeGraphSyncInfo* dependency,
+                                                       uint8_t                       submit,
+                                                       synNativeGraphSyncInfo*       completion)
+{
+    CHECK_POINTER(SYN_DEVICE, completion, "completion", synInvalidArgument);
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->queue == nullptr || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+
+    ScalLongSyncObject dependencyLongSo = LongSoEmpty;
+    const ScalLongSyncObject* dependencyPointer = nullptr;
+    if (dependency != nullptr && dependency->targetValue != 0)
+    {
+        dependencyLongSo.m_index       = dependency->longSoIndex;
+        dependencyLongSo.m_targetValue = dependency->targetValue;
+        dependencyPointer              = &dependencyLongSo;
+    }
+    ScalLongSyncObject completionLongSo = LongSoEmpty;
+    const synStatus status = graphHandle->queue->replayNativeComputeGraphSegment(*graphHandle->graph,
+                                                                                 segmentIndex,
+                                                                                 dependencyPointer,
+                                                                                 submit != 0,
+                                                                                 completionLongSo);
+    if (status == synSuccess)
+    {
+        completion->longSoIndex = completionLongSo.m_index;
+        completion->targetValue = completionLongSo.m_targetValue;
+    }
+    return status;
+}
+
+synStatus DeviceScal::nativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                                synNativeComputeGraphInfo*   graphInfo) const
+{
+    CHECK_POINTER(SYN_DEVICE, graphInfo, "graphInfo", synInvalidArgument);
+    std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+
+    switch (graphHandle->graph->state())
+    {
+        case NativeComputeGraph::State::CREATED:      graphInfo->state = synNativeGraphCreated; break;
+        case NativeComputeGraph::State::CAPTURING:    graphInfo->state = synNativeGraphCapturing; break;
+        case NativeComputeGraph::State::INSTANTIATED: graphInfo->state = synNativeGraphInstantiated; break;
+        case NativeComputeGraph::State::INVALID:      graphInfo->state = synNativeGraphInvalid; break;
+        case NativeComputeGraph::State::CLOSED:       graphInfo->state = synNativeGraphClosed; break;
+    }
+    graphInfo->segmentCount          = graphHandle->graph->segmentCount();
+    graphInfo->replayCount           = graphHandle->graph->replayCount();
+    graphInfo->completionLongSoIndex = graphHandle->graph->lastCompletion().m_index;
+    graphInfo->completionTarget      = graphHandle->graph->lastCompletion().m_targetValue;
+    graphInfo->globalProgramBytes    = graphHandle->graph->globalProgramBytes();
+    graphInfo->arcProgramBytes       = graphHandle->graph->arcProgramBytes();
+    return synSuccess;
+}
+
+synStatus DeviceScal::nativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle)
+{
+    std::unique_lock<std::mutex> lock(m_nativeGraphMutex);
+    if (m_nativeComputeGraphs.count(graphHandle) == 0 || graphHandle->graph == nullptr)
+    {
+        return synInvalidArgument;
+    }
+    if (graphHandle->graph->state() == NativeComputeGraph::State::CAPTURING)
+    {
+        return synInvalidArgument;
+    }
+
+    const synStatus status = graphHandle->graph->close();
+    if (status != synSuccess)
+    {
+        return status;
+    }
+    m_nativeComputeGraphs.erase(graphHandle);
+    lock.unlock();
+    delete graphHandle;
+    return synSuccess;
+}
+
+synStatus DeviceScal::destroyStream(synStreamHandle streamHandle)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_nativeGraphMutex);
+        for (const synNativeComputeGraphHandle graphHandle : m_nativeComputeGraphs)
+        {
+            if (graphHandle->streamHandle == streamHandle)
+            {
+                LOG_ERR(SYN_DEVICE, "Destroy native compute graphs before destroying their stream");
+                return synInvalidArgument;
+            }
+        }
+    }
+    return DeviceCommon::destroyStream(streamHandle);
+}
+
+synStatus DeviceScal::releaseAllNativeComputeGraphs()
+{
+    std::unique_lock<std::mutex> lock(m_nativeGraphMutex);
+    while (!m_nativeComputeGraphs.empty())
+    {
+        const synNativeComputeGraphHandle graphHandle = *m_nativeComputeGraphs.begin();
+        if (graphHandle->graph->state() == NativeComputeGraph::State::CAPTURING)
+        {
+            const synStatus abortStatus =
+                graphHandle->queue->abortNativeComputeGraphCapture(*graphHandle->graph);
+            if (abortStatus != synSuccess)
+            {
+                return abortStatus;
+            }
+        }
+        const synStatus status = graphHandle->graph->close();
+        if (status != synSuccess)
+        {
+            return status;
+        }
+        m_nativeComputeGraphs.erase(graphHandle);
+        delete graphHandle;
+    }
+    return synSuccess;
 }
 
 synStatus DeviceScal::createEvent(synEventHandle* pEventHandle, const unsigned int flags)
@@ -1282,7 +1507,9 @@ synStatus DeviceScal::createStreamScal(QueueInterface*&                rpQueueIn
                                                                    pComputeResources,
                                                                    m_devType,
                                                                    m_devSpecificInfo,
-                                                                   *m_devMemoryAlloc.get());
+                                                                   *m_devMemoryAlloc.get(),
+                                                                   *m_scalDev.getMemoryPool(ScalDev::MEMORY_POOL_GLOBAL),
+                                                                   *m_scalDev.getMemoryPool(ScalDev::MEMORY_POOL_HBM_SHARED));
 
             synStatus status = pQueueCompute->init(m_preAllocatedMem[streamIdx]);
             if (status != synSuccess)

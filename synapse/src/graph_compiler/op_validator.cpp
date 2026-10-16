@@ -1,4 +1,5 @@
 #include "op_validator.h"
+#include <algorithm>
 #include "data_type_utils.h"
 #include "gc_ops_db.h"
 #include "habana_global_conf.h"
@@ -14,11 +15,21 @@ static std::string_view operandRoleToStr(bool isInput)
     return isInput ? "input" : "output";
 }
 
-const std::vector<std::pair<OpValidator::ValidationFunction, std::string_view>> OpValidator::s_validations = {
+const std::vector<std::pair<OpValidator::ValidationFunction, std::string_view>> OpValidator::s_validationsV1 = {
     {OpValidator::validateNumOperands, "number of operand validation"},
     {OpValidator::validateRank, "operands rank validation"},
     {OpValidator::validateDatatypes, "operands datatype validation"},
     {OpValidator::validateCustom, "operands datatype validation"}};
+
+const std::vector<std::pair<OpValidator::ValidationFunction, std::string_view>> OpValidator::s_validationsV2 = {
+    {OpValidator::validateNumOperands, "number of operand validation"},
+    {OpValidator::validateRank, "operands rank validation"},
+    {OpValidator::validateDatatypes, "operands datatype validation"},
+    {OpValidator::validateDynShapesSupport, "dynamic-shape support validation"},
+    {OpValidator::validateShapeTensorInputs, "shape-tensor input validation"},
+    {OpValidator::validateH2DTensorInputs, "host-to-device tensor input validation"},
+    {OpValidator::validateDynShapesNDimsSupport, "dynamic-shape rank support validation"},
+    {OpValidator::validateCustom, "custom validation"}};
 
 OpValidator::ScopedSkipValidation::ScopedSkipValidation() : m_prevMode(enabled())
 {
@@ -45,15 +56,17 @@ bool OpValidator::enabled()
     return s_enabled;
 }
 
-ValidationResult
-OpValidator::validateOp(const std::string& guid, const OpValidationContext& ovc, synDeviceType deviceType)
+ValidationResult OpValidator::validateOp(const std::string&       guid,
+                                         const OpValidationContext& ovc,
+                                         synDeviceType             deviceType,
+                                         ValidationVersion         version)
 {
     if (!enabled()) return ValidationResult::SUCCESS;
     OpValidator validator(guid, ovc, deviceType);
-    return validator.runValidations();
+    return version == ValidationVersion::QUERY ? validator.runQueryValidations() : validator.runValidations(version);
 }
 
-ValidationResult OpValidator::runValidations() const
+ValidationResult OpValidator::runValidations(ValidationVersion version) const
 {
     const auto pGCOpInfo = GCOpsDB::instance().getGCOpInfo(getGuid(), getDevice());
     if (!pGCOpInfo)
@@ -68,7 +81,8 @@ ValidationResult OpValidator::runValidations() const
               getGuid(),
               getDevice());
 
-    for (const auto& [validationFunc, validationStr] : s_validations)
+    const auto& validations = version == ValidationVersion::V1 ? s_validationsV1 : s_validationsV2;
+    for (const auto& [validationFunc, validationStr] : validations)
     {
         LOG_TRACE(OP_VALIDATOR, "{}: running {}", HLLOG_FUNC, validationStr);
         const auto rc = validationFunc(*pGCOpInfo, getTestedOpCtx());
@@ -87,10 +101,103 @@ ValidationResult OpValidator::runValidations() const
     return ValidationResult::SUCCESS;
 }
 
+ValidationResult OpValidator::runQueryValidations() const
+{
+    const auto pGCOpInfo = GCOpsDB::instance().getGCOpInfo(getGuid(), getDevice());
+    if (!pGCOpInfo)
+    {
+        LOG_DEBUG(OP_VALIDATOR, "{}: Empty op info for input guid: {}", HLLOG_FUNC, getGuid());
+        return ValidationResult::GUID_NOT_FOUND;
+    }
+
+    HB_ASSERT(!getTestedOpCtx().empty(),
+              "Expecting non-empty op validation context, guid={}, device={}",
+              getGuid(),
+              getDevice());
+
+    struct QueryValidation
+    {
+        unsigned           bit;
+        ValidationFunction function;
+        std::string_view   description;
+    };
+    static constexpr QueryValidation queryValidations[] = {
+        {1U << 0, validateNumOperands, "number of operand validation"},
+        {1U << 1, validateRank, "operands rank validation"},
+        {1U << 2, validateDatatypes, "operands datatype validation"},
+        {1U << 3, validateDynShapesSupport, "dynamic-shape support validation"},
+        {1U << 4, validateShapeTensorInputs, "shape-tensor input validation"},
+        {1U << 5, validateH2DTensorInputs, "host-to-device tensor input validation"},
+    };
+
+    if (getTestedOpCtx().resultBitMap() == nullptr)
+    {
+        LOG_ERR(OP_VALIDATOR, "{}: query result bitmap is null for guid={}", HLLOG_FUNC, getGuid());
+        return ValidationResult::FAILURE;
+    }
+
+    bool failed = false;
+    for (const auto& validation : queryValidations)
+    {
+        if ((getTestedOpCtx().queryBitMap() & validation.bit) == 0) continue;
+        const auto rc = validation.function(*pGCOpInfo, getTestedOpCtx());
+        if (rc == ValidationResult::SUCCESS) continue;
+
+        *getTestedOpCtx().resultBitMap() |= validation.bit;
+        failed = true;
+        LOG_DEBUG(OP_VALIDATOR,
+                  "{}: Failed query {} for guid={}, device={}, rc={}",
+                  HLLOG_FUNC,
+                  validation.description,
+                  getGuid(),
+                  getDevice(),
+                  toString(rc));
+    }
+    return failed ? ValidationResult::FAILURE : ValidationResult::SUCCESS;
+}
+
 bool OpValidator::isSupportedDatatype(synDataType testedType, unsigned supportedTypesMask)
 {
     return ((supportedTypesMask & testedType) != 0) ||
            (GCFG_SYNAPSE_DATA_TYPE_SELECTION.value() && testedType == syn_type_na);
+}
+
+ValidationResult OpValidator::validateDynShapesSupport(const OpInfo&              gcOpInfo,
+                                                       const OpValidationContext& opValCtx)
+{
+    return opValCtx.supportsDynamicShapes() && !gcOpInfo.supportsDynamicShapes
+               ? ValidationResult::GUID_MISSING_DYNAMIC_SUPPORT
+               : ValidationResult::SUCCESS;
+}
+
+ValidationResult OpValidator::validateShapeTensorInputs(const OpInfo&              gcOpInfo,
+                                                        const OpValidationContext& opValCtx)
+{
+    return opValCtx.requiresShapeTensor() && !gcOpInfo.supportsShapeTensorInput
+               ? ValidationResult::GUID_HAS_NO_SHAPE_TENSOR_INPUT
+               : ValidationResult::SUCCESS;
+}
+
+ValidationResult OpValidator::validateH2DTensorInputs(const OpInfo&              gcOpInfo,
+                                                      const OpValidationContext& opValCtx)
+{
+    return opValCtx.requiresH2DTensor() && !gcOpInfo.supportsH2DTensorInput
+               ? ValidationResult::GUID_HAS_NO_H2D_TENSOR_INPUT
+               : ValidationResult::SUCCESS;
+}
+
+ValidationResult OpValidator::validateDynShapesNDimsSupport(const OpInfo&,
+                                                            const OpValidationContext& opValCtx)
+{
+    if (!opValCtx.supportsDynamicShapes()) return ValidationResult::SUCCESS;
+    const auto hasUnsupportedRank = [](const auto& operands) {
+        return std::any_of(operands.begin(), operands.end(), [](const auto& operand) {
+            return !operand.empty() && operand.getRank() > HABANA_DIM_MAX;
+        });
+    };
+    return hasUnsupportedRank(opValCtx.getInputs()) || hasUnsupportedRank(opValCtx.getOutputs())
+               ? ValidationResult::DS_NDIMS_NOT_SUPPORTED
+               : ValidationResult::SUCCESS;
 }
 
 ValidationResult OpValidator::validateRank(const OpInfo& gcOpInfo, const OpValidationContext& opValCtx)
@@ -279,6 +386,14 @@ static std::string_view toString(ValidationResult status)
             return "INCOMPATIBLE_OUTPUT_SIZE";
         case ValidationResult::INCOMPATIBLE_DATA_TYPE:
             return "INCOMPATIBLE_DATA_TYPE";
+        case ValidationResult::GUID_MISSING_DYNAMIC_SUPPORT:
+            return "GUID_MISSING_DYNAMIC_SUPPORT";
+        case ValidationResult::GUID_HAS_NO_SHAPE_TENSOR_INPUT:
+            return "GUID_HAS_NO_SHAPE_TENSOR_INPUT";
+        case ValidationResult::GUID_HAS_NO_H2D_TENSOR_INPUT:
+            return "GUID_HAS_NO_H2D_TENSOR_INPUT";
+        case ValidationResult::DS_NDIMS_NOT_SUPPORTED:
+            return "DS_NDIMS_NOT_SUPPORTED";
         case ValidationResult::FAILURE:
             return "FAILED";
         default:

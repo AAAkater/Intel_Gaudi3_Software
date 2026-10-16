@@ -123,6 +123,24 @@ bool ScalMonitorBase::getConfigRegsForLongSO(FenceIdType           fenceId,
     return true;
 }
 
+bool ScalMonitorBase::nativeArmRegisters(uint32_t longSoIndex, MonitorAddressesType& addresses,
+                                       MonitorValuesType& values) const
+{
+    if (longSoIndex % 8 || (m_soGroupIdx >> 8) != ((longSoIndex >> 3) >> 8)) return false;
+    // Upper monitor words precede the low word that actually arms the chain.
+    for (unsigned n = 0; n < 4; ++n)
+    {
+        const unsigned part = (n + 1) % 4;
+        addresses[n] = m_deviceInfoInterface.getMonitorArmRegisterAddress(m_syncMgrId, m_monitorId + part);
+        values[n] = m_deviceInfoInterface.getMonitorArmRegisterValue(0, false,
+            (~(1 << (longSoIndex % 8))), (longSoIndex >> 3) & 0xff);
+        const uint32_t all = m_deviceInfoInterface.getMonitorArmRegisterValue(0x7fff, false,
+            (~(1 << (longSoIndex % 8))), (longSoIndex >> 3) & 0xff);
+        if ((all ^ values[n]) != 0xfffe0000u) return false;
+    }
+    return true;
+}
+
 void ScalMonitorBase::getArmRegsForLongSO(const ScalLongSyncObject& rLongSo,
                                           const FenceIdType         fenceId,
                                           uint8_t&                  numRegs,

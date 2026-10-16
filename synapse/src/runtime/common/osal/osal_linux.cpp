@@ -565,6 +565,27 @@ int OSAL::getFd() const
     return m_computeFD;
 }
 
+synStatus OSAL::updateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec) const
+{
+    if (!isAcquired())
+    {
+        LOG_ERR(SYN_OSAL, "Cannot update memory consumption without an acquired device");
+        return synNoDeviceFound;
+    }
+
+    const int rc = hlthunk_set_memory_consumption(m_computeFD, usedMem, timestampSec);
+    if (rc != 0)
+    {
+        LOG_ERR(SYN_OSAL,
+                "hlthunk_set_memory_consumption failed with rc {} for {} bytes at timestamp {}",
+                rc,
+                usedMem,
+                timestampSec);
+        return synFail;
+    }
+    return synSuccess;
+}
+
 synDeviceType OSAL::getDeviceType() const
 {
     if (!isAcquired())
@@ -626,7 +647,7 @@ std::pair<bool, std::string> OSAL::runCmd(const char* cmd)
 {
     std::array<char, 128>                    buffer;
     std::string                              result;
-    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+    std::unique_ptr<FILE, int (*)(FILE*)> pipe(popen(cmd, "r"), pclose);
     if (!pipe)
     {
         LOG_ERR(SYN_OSAL, "popen failed");

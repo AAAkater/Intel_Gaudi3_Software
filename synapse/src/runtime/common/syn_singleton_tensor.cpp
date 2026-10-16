@@ -855,6 +855,47 @@ synStatus synSingleton::tensorSetIsExternal(synTensor tensor, bool isExternal)
     return synSuccess;
 }
 
+synStatus synSingleton::tensorSetIsReusable(synTensor tensor, bool isReusable)
+{
+    VERIFY_IS_NULL_POINTER(SYN_API, tensor, "Tensor");
+    GET_TENSOR_UNSAFE();
+    IS_PROPS_LOCKED(t);
+
+    if (isReusable && !t->isPersistent())
+    {
+        LOG_ERR(SYN_API,
+                "{}: Tensor {} cannot be marked as reusable without being persistent",
+                HLLOG_FUNC,
+                t->getName());
+        return synInvalidArgument;
+    }
+
+    LOG_DEBUG_T(SYN_API,
+                "{}: tensor ID: {}, tensor name: {}, reusable: {}",
+                HLLOG_FUNC,
+                t->getId(),
+                t->getName(),
+                isReusable);
+    t->setTensorAsReusable(isReusable);
+    return synSuccess;
+}
+
+synStatus synSingleton::tensorSetMinimalLatency(synTensor tensor, bool minimalLatency)
+{
+    VERIFY_IS_NULL_POINTER(SYN_API, tensor, "Tensor");
+    GET_TENSOR_UNSAFE();
+    IS_PROPS_LOCKED(t);
+
+    LOG_DEBUG_T(SYN_API,
+                "{}: tensor ID: {}, tensor name: {}, minimal latency: {}",
+                HLLOG_FUNC,
+                t->getId(),
+                t->getName(),
+                minimalLatency);
+    t->setMinimalLatency(minimalLatency);
+    return synSuccess;
+}
+
 synStatus
 synSingleton::tensorSetGeometry(synTensor tensor, const synTensorGeometry* geometry, synGeometryType geometryType)
 {
@@ -1332,6 +1373,15 @@ synStatus synSingleton::tensorGetIsExternal(const synTensor tensor, bool* isExte
     GET_TENSOR_UNSAFE();
     IS_PROPS_LOCKED(t);
     *isExternal = t->getTensorIsExternal();
+    return synSuccess;
+}
+
+synStatus synSingleton::tensorGetMinimalLatency(const synTensor tensor, bool* minimalLatency)
+{
+    VERIFY_IS_NULL_POINTER(SYN_API, tensor, "Tensor");
+    VERIFY_IS_NULL_POINTER(SYN_API, minimalLatency, "minimalLatency");
+    GET_TENSOR_UNSAFE();
+    *minimalLatency = t->isMinimalLatency();
     return synSuccess;
 }
 

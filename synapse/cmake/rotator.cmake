@@ -12,6 +12,7 @@ if (NOT TARGET RotatorStack)
     endif()
 
     ExternalProject_Add(RotatorStack
+        BUILD_ALWAYS TRUE
         TIMEOUT 10
         CMAKE_ARGS -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} "-DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}" -DCMAKE_COLOR_MAKEFILE=${CMAKE_COLOR_MAKEFILE} -DSANITIZE_ON=${SANITIZE_ON} -DVALGRIND_ON=${VALGRIND_ON} -DRUN_WITH_SYNAPSE=1
         SOURCE_DIR "$ENV{ROTATOR_ROOT}"
@@ -21,6 +22,7 @@ if (NOT TARGET RotatorStack)
         LOG_DOWNLOAD OFF
         LOG_CONFIGURE ON
         LOG_BUILD ON
+        BUILD_BYPRODUCTS ${rotator_build_dir}/lib/librotator_lib.a
     )
 endif()
 
@@ -29,4 +31,3 @@ set_property(TARGET rotator_stack PROPERTY IMPORTED_LOCATION ${rotator_build_dir
 SET_PROPERTY(TARGET rotator_stack
              APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES $ENV{ROTATOR_ROOT})
 add_dependencies(rotator_stack RotatorStack)
-

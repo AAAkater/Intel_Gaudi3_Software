@@ -7,6 +7,11 @@
 #include "test_config.hpp"
 #include "test_tensors_container.hpp"
 #include "test_recipe_interface.hpp"
+#include "habana_graph.h"
+#include "syn_singleton.hpp"
+
+#include <atomic>
+#include <thread>
 
 using namespace std::literals::chrono_literals;
 
@@ -31,6 +36,100 @@ public:
 };
 
 REGISTER_SUITE(SynApiNoDeviceTest, ALL_TEST_PACKAGES);
+
+TEST_F_SYN(SynApiNoDeviceTest, tensor_reuse_and_minimal_latency_contract)
+{
+    synGraphHandle graph {};
+    ASSERT_EQ(synSuccess, synGraphCreate(&graph, m_deviceType));
+
+    synTensor workspaceTensor {};
+    ASSERT_EQ(synSuccess, synTensorHandleCreate(&workspaceTensor, graph, DATA_TENSOR, "workspace"));
+    EXPECT_EQ(synInvalidArgument, synTensorSetMemoryReuse(workspaceTensor, true));
+    EXPECT_EQ(synSuccess, synTensorSetMemoryReuse(workspaceTensor, false));
+
+    bool minimalLatency = true;
+    EXPECT_EQ(synSuccess, synTensorGetMinimalLatency(workspaceTensor, &minimalLatency));
+    EXPECT_FALSE(minimalLatency);
+    EXPECT_EQ(synSuccess, synTensorSetMinimalLatency(workspaceTensor, true));
+    EXPECT_EQ(synSuccess, synTensorGetMinimalLatency(workspaceTensor, &minimalLatency));
+    EXPECT_TRUE(minimalLatency);
+
+    synSectionHandle section {};
+    ASSERT_EQ(synSuccess, synSectionCreate(&section, 0, graph));
+    synTensor persistentInput {};
+    ASSERT_EQ(synSuccess, synTensorHandleCreate(&persistentInput, graph, DATA_TENSOR, "persistent_input"));
+    ASSERT_EQ(synSuccess, synTensorAssignToSection(persistentInput, section, 0));
+    ASSERT_EQ(synSuccess, synTensorSetMemoryReuse(persistentInput, true));
+    EXPECT_TRUE(reinterpret_cast<Tensor*>(persistentInput)->isMemoryReusable());
+
+    ASSERT_EQ(synSuccess, synGraphDestroy(graph));
+    ASSERT_EQ(synSuccess, synSectionDestroy(section));
+}
+
+TEST_F_SYN(SynApiNoDeviceTest, last_error_is_thread_local_and_dump_is_safe_without_device)
+{
+    ASSERT_EQ(synInvalidArgument, synTensorSetMemoryReuse(nullptr, true));
+    EXPECT_EQ(synInvalidArgument, synGetLastError());
+    ASSERT_NE(nullptr, synGetLastErrorMessage());
+    EXPECT_NE(std::string::npos, std::string(synGetLastErrorMessage()).find("synTensorSetMemoryReuse"));
+    EXPECT_STREQ("Invalid argument", synGetErrorString(synInvalidArgument));
+
+    std::atomic<int> workerCallStatus {synSuccess};
+    std::atomic<int> workerLastError {synSuccess};
+    std::thread worker([&]() {
+        workerCallStatus.store(synUpdateMemoryConsumption(1, 1));
+        workerLastError.store(synGetLastError());
+    });
+    worker.join();
+
+    EXPECT_EQ(synNoDeviceFound, workerCallStatus.load());
+    EXPECT_EQ(synNoDeviceFound, workerLastError.load());
+    EXPECT_EQ(synInvalidArgument, synGetLastError());
+
+    EXPECT_EQ(synNoDeviceFound, synDumpStateAndTerminate("no-device contract test", 0));
+    EXPECT_EQ(synNoDeviceFound, synGetLastError());
+}
+
+TEST_F_SYN(SynApiNoDeviceTest, user_programmability_copies_caller_metadata)
+{
+    synGraphHandle graph {};
+    ASSERT_EQ(synSuccess, synGraphCreate(&graph, m_deviceType));
+
+    synTensor input {}, output {};
+    ASSERT_EQ(synSuccess, synTensorHandleCreate(&input, graph, DATA_TENSOR, "programmability_input"));
+    ASSERT_EQ(synSuccess, synTensorHandleCreate(&output, graph, DATA_TENSOR, "programmability_output"));
+
+    synNodeId nodeId {};
+    ASSERT_EQ(synSuccess,
+              synNodeCreateWithId(graph,
+                                  &input,
+                                  &output,
+                                  1,
+                                  1,
+                                  nullptr,
+                                  0,
+                                  "memcpy",
+                                  "programmability_memcpy",
+                                  &nodeId,
+                                  nullptr,
+                                  nullptr));
+
+    synUserExecOrder order {17, 3};
+    synUserProgrammability programmability {&order, nullptr};
+    ASSERT_EQ(synSuccess, synNodeSetUserProgrammability(graph, nodeId, &programmability));
+    order.groupId               = 99;
+    order.executionOrderedIndex = 88;
+
+    HabanaGraph* internalGraph = synSingleton::getInstanceInternal()->getGraph(graph);
+    ASSERT_NE(nullptr, internalGraph);
+    NodePtr node = internalGraph->getNodeByID(nodeId);
+    ASSERT_NE(nullptr, node);
+    ASSERT_TRUE(node->getUserExecOrder().has_value());
+    EXPECT_EQ(17u, node->getUserExecOrder()->groupId);
+    EXPECT_EQ(3u, node->getUserExecOrder()->executionOrderedIndex);
+
+    ASSERT_EQ(synSuccess, synGraphDestroy(graph));
+}
 
 TEST_F_SYN(SynApiNoDeviceTest, section_group_semantic_checks)
 {

@@ -16,6 +16,8 @@
 #include "runtime/common/recipe/recipe_logger.hpp"
 #include "runtime/scal/common/entities/scal_stream_copy_interface.hpp"
 #include "runtime/scal/common/entities/scal_stream_compute_interface.hpp"
+#include "runtime/scal/common/entities/scal_stream_base.hpp"
+#include "runtime/scal/common/native_recipe_memory.hpp"
 #include "runtime/scal/common/scal_event.hpp"
 #include "log_manager.h"
 #include "runtime/scal/common/infra/scal_utils.hpp"
@@ -41,7 +43,9 @@ RecipeLauncher::RecipeLauncher(ScalStreamComputeInterface*     pComputeScalStrea
                                const InternalRecipeHandle*     pRecipeHandle,
                                DynamicRecipe*                  pDynamicRecipeProcessor,
                                uint64_t                        runningId,
-                               uint8_t                         apiId)
+                               uint8_t                         apiId,
+                               NativeRecipeMemory*             nativeRecipeMemory,
+                               NativeScalCommandBuffer*        nativeCommands)
 : m_devMemoryAlloc(devMemoryAlloc),
   m_rLaunchTracker(rLaunchTracker),
   m_pRecipeHandle(pRecipeHandle),
@@ -55,7 +59,9 @@ RecipeLauncher::RecipeLauncher(ScalStreamComputeInterface*     pComputeScalStrea
   m_isDsd(RecipeUtils::isDsd(m_pRecipeHandle->basicRecipeHandle)),
   m_pDynamicRecipeProcessor(pDynamicRecipeProcessor),
   m_isIH2DRecipe(RecipeUtils::isIH2DRecipe(m_pRecipeHandle->basicRecipeHandle.recipe)),
-  m_apiId(apiId)
+  m_apiId(apiId),
+  m_nativeRecipeMemory(nativeRecipeMemory),
+  m_nativeCommands(nativeCommands)
 {
     HB_ASSERT(pComputeScalStream->getStaticMonitorPayloadInfo(m_computeWorkCompletionAddress, m_computeWorkCompletionValue) == true,
               "Failed to get Compute's Monitor payload-address");
@@ -152,15 +158,46 @@ synStatus RecipeLauncher::launch(const LaunchInfo& launchInfo)
 
     uint64_t nbExtTensors =
         launchInfo.pRecipeHandle->deviceAgnosticRecipeHandle.m_signalFromGraphInfo.getNumberOfExternalTensors();
+
+    ScalStreamBase* nativeScalStream = nullptr;
+    if (m_nativeCommands != nullptr)
+    {
+        nativeScalStream = dynamic_cast<ScalStreamBase*>(getComputeScalStream());
+        if (nativeScalStream == nullptr)
+        {
+            LOG_ERR(SYN_STREAM, "Native command capture requires ScalStreamBase");
+            return synUnsupported;
+        }
+        status = nativeScalStream->beginNativeCommandCapture();
+        if (status != synSuccess)
+        {
+            return status;
+        }
+        nativeScalStream->noteNativeCompletionIncrementsBeforeCommands(nbExtTensors);
+    }
+
     updateSfgLongSos(nbExtTensors, launchInfo.events);
 
     STAT_GLBL_START(scalEnqueueStat);
     status = scalEnqueue(nbExtTensors);  // enqueue, event record for next launch
     if (status != synSuccess)
     {
+        if (nativeScalStream != nullptr)
+        {
+            nativeScalStream->cancelNativeCommandCapture();
+        }
         // if enqueue failed, the assumption is that we didn't reach the device
         // therefore no synFailedAfterEnqueue
         return status;
+    }
+
+    if (nativeScalStream != nullptr)
+    {
+        status = nativeScalStream->endNativeCommandCapture(*m_nativeCommands);
+        if (status != synSuccess)
+        {
+            return status;
+        }
     }
     /*
      * UNRECOVERABLE REGION : END
@@ -450,8 +487,11 @@ synStatus RecipeLauncher::scalEnqueue(uint64_t nbExtTensors)
     // set the longSo on the HBM allocators (record an event to get the current longSo)
     ScalLongSyncObject scalLongSyncObject;
     getComputeScalStream()->longSoRecord(true, scalLongSyncObject);
-    m_memMgrs.arcHbmMemMgr.setLongSo(scalLongSyncObject.m_targetValue);
-    m_memMgrs.hbmGlblMemMgr.setLongSo(scalLongSyncObject.m_targetValue);
+    if (m_nativeRecipeMemory == nullptr)
+    {
+        m_memMgrs.arcHbmMemMgr.setLongSo(scalLongSyncObject.m_targetValue);
+        m_memMgrs.hbmGlblMemMgr.setLongSo(scalLongSyncObject.m_targetValue);
+    }
 
     return synSuccess;
 }
@@ -587,26 +627,41 @@ synStatus RecipeLauncher::prepareForDownload(const LaunchInfo& launchInfo)
 {
     STAT_GLBL_START(scalGetHbms);
 
-    // Get address on hbm-global to be used
-    uint64_t longSoGlbHbm = m_memMgrs.hbmGlblMemMgr.getAddr(
-        launchInfo.pRecipeHandle->deviceAgnosticRecipeHandle.m_recipeStaticInfoScal.m_glbHbmSizeTotal,
-        m_sections.m_glbHbmAddr);
-
-    // get address for hbm-arc to be used
-    uint64_t longSoArcHbm = m_memMgrs.arcHbmMemMgr.getAddr(
-        launchInfo.pRecipeHandle->deviceAgnosticRecipeHandle.m_recipeStaticInfoScal.m_arcHbmSize,
-        m_sections.m_arcHbmAddr,
-        m_sections.m_arcHbmCoreAddr);
-
-    // wait for the longSo that indicates the buffer is free
-    uint64_t maxLongSo            = std::max(longSoGlbHbm, longSoArcHbm);
-    m_longSoHbmBuff.m_targetValue = maxLongSo;
-
-    LOG_DEBUG(SYN_PROG_DWNLD, "waiting for max({:x},{:x})", longSoGlbHbm, longSoArcHbm);
-    synStatus status = getTxCommandsScalStream()->longSoWaitOnDevice(m_longSoHbmBuff, false);
-    if (status != synSuccess)
+    synStatus status = synSuccess;
+    if (m_nativeRecipeMemory != nullptr)
     {
-        return status;
+        if (!m_nativeRecipeMemory->initialized() || m_nativeRecipeMemory->closed())
+        {
+            LOG_ERR(SYN_PROG_DWNLD, "Native recipe memory is not available");
+            return synObjectNotInitialized;
+        }
+        m_sections.m_glbHbmAddr     = m_nativeRecipeMemory->globalDeviceAddress();
+        m_sections.m_arcHbmAddr     = m_nativeRecipeMemory->arcDeviceAddress();
+        m_sections.m_arcHbmCoreAddr = m_nativeRecipeMemory->arcCoreAddress();
+    }
+    else
+    {
+        // Get address on hbm-global to be used
+        uint64_t longSoGlbHbm = m_memMgrs.hbmGlblMemMgr.getAddr(
+            launchInfo.pRecipeHandle->deviceAgnosticRecipeHandle.m_recipeStaticInfoScal.m_glbHbmSizeTotal,
+            m_sections.m_glbHbmAddr);
+
+        // get address for hbm-arc to be used
+        uint64_t longSoArcHbm = m_memMgrs.arcHbmMemMgr.getAddr(
+            launchInfo.pRecipeHandle->deviceAgnosticRecipeHandle.m_recipeStaticInfoScal.m_arcHbmSize,
+            m_sections.m_arcHbmAddr,
+            m_sections.m_arcHbmCoreAddr);
+
+        // wait for the longSo that indicates the buffer is free
+        uint64_t maxLongSo            = std::max(longSoGlbHbm, longSoArcHbm);
+        m_longSoHbmBuff.m_targetValue = maxLongSo;
+
+        LOG_DEBUG(SYN_PROG_DWNLD, "waiting for max({:x},{:x})", longSoGlbHbm, longSoArcHbm);
+        status = getTxCommandsScalStream()->longSoWaitOnDevice(m_longSoHbmBuff, false);
+        if (status != synSuccess)
+        {
+            return status;
+        }
     }
 
     STAT_GLBL_COLLECT_TIME(scalGetHbms, globalStatPointsEnum::scalGetHbms);
@@ -1586,7 +1641,10 @@ void RecipeLauncher::handleKernelsPrintf(const LaunchInfo& launchInfo)
 
 void RecipeLauncher::clearMemMgrs()
 {
-    m_memMgrs.hbmGlblMemMgr.unuseIdOnError();
-    m_memMgrs.arcHbmMemMgr.unuseIdOnError();
+    if (m_nativeRecipeMemory == nullptr)
+    {
+        m_memMgrs.hbmGlblMemMgr.unuseIdOnError();
+        m_memMgrs.arcHbmMemMgr.unuseIdOnError();
+    }
     m_memMgrs.mappedMemMgr.unuseIdOnError(m_entryIds);
 }

@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include "size_param.hpp"
+#include "string_utils.hpp"
 #include "hlgcfg_defs.hpp"
 
 namespace hl_gcfg{
@@ -45,4 +46,3 @@ std::pair<uint32_t, T> deviceValue(uint32_t deviceType, T value)
 }
 }}
 #include "impl/hlgcfg_default_item.inl"
-

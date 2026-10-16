@@ -14,6 +14,9 @@
 #include "types.h"
 
 #include <memory>
+#include <map>
+#include <limits>
+#include <unordered_map>
 #include <vector>
 #include <malloc.h>
 
@@ -511,12 +514,14 @@ synStatus synSingleton::duplicateGraph(synGraphHandle      graphHandle,
                             "{}: Failed to create duplicate graph for graph {}, section duplication failed",
                             HLLOG_FUNC,
                             graphHandle->graphId);
-                    // cleanup on failure
+                    // Graph nodes and the duplication map retain section
+                    // references. Release both before returning their slots.
+                    tensorsPtrMapVec.clear();
+                    m_graphEntries.destroyGraph(*newGraphHandle).reset();
                     for (synSectionHandle newlyCreatedSection : newSections)
                     {
                         m_sectionHndlSlopMap.erase((SMHandle)newlyCreatedSection);
                     }
-                    m_graphEntries.destroyGraph(*newGraphHandle);
                     return synFail;
                 }
                 ptr->setSectionHandle((synSectionHandle)handle);
@@ -635,6 +640,151 @@ HabanaGraph* synSingleton::getGraph(const synGraphHandle graphHandle)
     return returnValue;
 }
 
+namespace
+{
+synStatus applyUserProgrammability(HabanaGraph& graph)
+{
+    using OrderedNode = std::pair<unsigned, NodePtr>;
+    std::map<unsigned, std::vector<OrderedNode>> executionGroups;
+    std::map<unsigned, NodeVector>               bundleGroups;
+
+    for (const NodePtr& node : graph.getNodes())
+    {
+        if (node->getUserExecOrder().has_value())
+        {
+            const auto& order = node->getUserExecOrder().value();
+            executionGroups[order.groupId].emplace_back(order.executionOrderedIndex, node);
+        }
+        else if (node->getUserBundling().has_value())
+        {
+            bundleGroups[node->getUserBundling()->bundleUserIndex].push_back(node);
+        }
+    }
+
+    auto addOrderedEdges = [&graph](const NodeVector& nodes, const char* context) -> synStatus {
+        for (size_t index = 1; index < nodes.size(); ++index)
+        {
+            const NodePtr& before = nodes[index - 1];
+            const NodePtr& after  = nodes[index];
+            if (graph.isAncestor(after, before))
+            {
+                LOG_ERR(SYN_GRAPH,
+                        "User {} order would create a cycle between nodes {} and {}",
+                        context,
+                        before->getNodeName(),
+                        after->getNodeName());
+                return synInvalidArgument;
+            }
+            if (!graph.isAncestor(before, after))
+            {
+                graph.addControlDependency(before, after, Tensor::ControlEdgeType::SCHEDULE);
+            }
+        }
+        return synSuccess;
+    };
+
+    for (auto& [groupId, orderedNodes] : executionGroups)
+    {
+        std::sort(orderedNodes.begin(), orderedNodes.end(), [](const OrderedNode& lhs, const OrderedNode& rhs) {
+            if (lhs.first != rhs.first) return lhs.first < rhs.first;
+            return lhs.second->getId() < rhs.second->getId();
+        });
+
+        for (size_t index = 1; index < orderedNodes.size(); ++index)
+        {
+            if (orderedNodes[index - 1].first == orderedNodes[index].first)
+            {
+                LOG_ERR(SYN_GRAPH,
+                        "User execution-order group {} contains duplicate index {}",
+                        groupId,
+                        orderedNodes[index].first);
+                return synInvalidArgument;
+            }
+        }
+
+        NodeVector nodes;
+        nodes.reserve(orderedNodes.size());
+        std::transform(orderedNodes.begin(),
+                       orderedNodes.end(),
+                       std::back_inserter(nodes),
+                       [](const OrderedNode& item) { return item.second; });
+        const synStatus status = addOrderedEdges(nodes, "execution");
+        if (status != synSuccess) return status;
+    }
+
+    if (bundleGroups.empty()) return synSuccess;
+
+    unsigned nextBundleIndex = 0;
+    for (const NodePtr& node : graph.getNodes())
+    {
+        if (node->getNodeAnnotation().bundleInfo.is_set())
+        {
+            const unsigned index = node->getNodeAnnotation().bundleInfo->bundleIndex;
+            if (index == std::numeric_limits<unsigned>::max()) return synOutOfResources;
+            nextBundleIndex = std::max(nextBundleIndex, index + 1);
+        }
+    }
+
+    const NodeVector topoNodes = graph.getTopoSortedNodes();
+    std::unordered_map<synNodeId, size_t> topoIndex;
+    for (size_t index = 0; index < topoNodes.size(); ++index)
+    {
+        topoIndex.emplace(topoNodes[index]->getId(), index);
+    }
+
+    for (auto& [userBundleIndex, nodes] : bundleGroups)
+    {
+        if (nextBundleIndex == std::numeric_limits<unsigned>::max()) return synOutOfResources;
+        std::sort(nodes.begin(), nodes.end(), [&topoIndex](const NodePtr& lhs, const NodePtr& rhs) {
+            return topoIndex.at(lhs->getId()) < topoIndex.at(rhs->getId());
+        });
+
+        NodeSet members(nodes.begin(), nodes.end());
+        for (const NodePtr& member : nodes)
+        {
+            if (member->getNodeAnnotation().bundleInfo.is_set())
+            {
+                LOG_ERR(SYN_GRAPH,
+                        "Node {} already belongs to compiler bundle {} and cannot enter user bundle {}",
+                        member->getNodeName(),
+                        member->getNodeAnnotation().bundleInfo->bundleIndex,
+                        userBundleIndex);
+                return synInvalidArgument;
+            }
+
+            for (const NodePtr& outsideProducer : graph.getNodeProducers(member))
+            {
+                if (outsideProducer == nullptr || members.count(outsideProducer) != 0) continue;
+                for (const NodePtr& bundleMember : nodes)
+                {
+                    if (graph.isAncestor(bundleMember, outsideProducer))
+                    {
+                        LOG_ERR(SYN_GRAPH,
+                                "User bundle {} is not dependency-convex around nodes {} and {}",
+                                userBundleIndex,
+                                bundleMember->getNodeName(),
+                                outsideProducer->getNodeName());
+                        return synInvalidArgument;
+                    }
+                }
+            }
+        }
+
+        for (size_t operationIndex = 0; operationIndex < nodes.size(); ++operationIndex)
+        {
+            nodes[operationIndex]->getNodeAnnotation().bundleInfo.set(
+                BundleInfo(nextBundleIndex, BundleType::UNDEFINED, operationIndex));
+        }
+        ++nextBundleIndex;
+
+        const synStatus status = addOrderedEdges(nodes, "bundle");
+        if (status != synSuccess) return status;
+    }
+
+    return synSuccess;
+}
+}  // namespace
+
 /*
  ***************************************************************************************************
  *   @brief Compile the current graph
@@ -661,6 +811,13 @@ synStatus synSingleton::compileGraph(synRecipeHandle*     pRecipeHandle,
     if (graph == nullptr)
     {
         return synFail;
+    }
+
+    const synStatus programmabilityStatus = applyUserProgrammability(*graph);
+    if (programmabilityStatus != synSuccess)
+    {
+        LOG_ERR(SYN_API, "{}: invalid user programmability metadata", HLLOG_FUNC);
+        return programmabilityStatus;
     }
 
     InternalRecipeHandle* pInternalRecipeHandle = nullptr;
@@ -994,9 +1151,10 @@ synStatus synSingleton::destroyGraph(const synGraphHandle graphHandle)
     VERIFY_IS_NULL_POINTER(SYN_API, graphHandle, "graphHandle");
 
     HabanaGraphPtr graphPtr;
+    GraphEntriesContainer::SectionHandleVec retiredSections;
     {
         std::unique_lock<std::mutex> guard(m_graphsMutex);
-        graphPtr = m_graphEntries.destroyGraph(graphHandle);
+        graphPtr = m_graphEntries.destroyGraph(graphHandle, &retiredSections);
         if (!graphPtr)
         {
             return synFail;
@@ -1005,6 +1163,15 @@ synStatus synSingleton::destroyGraph(const synGraphHandle graphHandle)
     // actual graph destructor is called outside of the lock scope
     const auto nbNodes = graphPtr->getNumNodes();
     graphPtr.reset();
+    // Tensor section references held by graph nodes are gone only after the
+    // actual graph destructor. Erasing earlier leaks every occupied slot.
+    for (synSectionHandle section : retiredSections)
+    {
+        if (!m_sectionHndlSlopMap.erase((SMHandle)section))
+        {
+            LOG_ERR(SYN_GRAPH, "failed to retire section 0x{:x} after graph destruction", (SMHandle)section);
+        }
+    }
     delete graphHandle;
     // large graphs create glibc heap fragmentation (objects have different liftime)
     // glibc does not handle fragmentation automatically (jemalloc does)
@@ -1056,6 +1223,38 @@ synStatus synSingleton::nodeSetDeterministic(const synGraphHandle graphHandle,
     NodePtr node = _findNodeLockRequired(nodeId, graphHandle->graphId, nodeId);
     if (!node) return synFail;
     node->setDeterministic(useDeterministic);
+    return synSuccess;
+}
+
+synStatus synSingleton::nodeSetUserProgrammability(const synGraphHandle           graphHandle,
+                                                   synNodeId                     nodeId,
+                                                   const synUserProgrammability* userProgrammability)
+{
+    VERIFY_IS_NULL_POINTER(SYN_API, graphHandle, "graphHandle");
+    VERIFY_IS_NULL_POINTER(SYN_API, userProgrammability, "userProgrammability");
+
+    if (userProgrammability->userExecOrder == nullptr && userProgrammability->userBundling == nullptr)
+    {
+        LOG_ERR(SYN_API, "{}: no user programmability mode was supplied", HLLOG_FUNC);
+        return synInvalidArgument;
+    }
+
+    std::unique_lock<std::mutex> guard(m_graphsMutex);
+    HabanaGraph*                 graph = m_graphEntries[graphHandle];
+    if (graph == nullptr)
+    {
+        LOG_ERR(SYN_API, "{}: Graph Handle is incorrect.", HLLOG_FUNC);
+        return synInvalidArgument;
+    }
+
+    NodePtr node = graph->getNodeByID(nodeId);
+    if (node == nullptr)
+    {
+        LOG_ERR(SYN_API, "{}: nodeId {} is incorrect.", HLLOG_FUNC, nodeId);
+        return synInvalidArgument;
+    }
+
+    node->setUserProgrammability(*userProgrammability);
     return synSuccess;
 }
 

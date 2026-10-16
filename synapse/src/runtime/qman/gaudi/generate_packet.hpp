@@ -56,6 +56,7 @@ private:
 class GenMsgLong : public BasePacketImpl<packet_msg_long>
 {
 public:
+    using BasePacketImpl<packet_msg_long>::generatePacket;
     GenMsgLong(uint32_t value,
                uint32_t op,
                uint32_t engBarrier,
@@ -129,6 +130,7 @@ public:
 class GenFence : public BasePacketImpl<packet_fence>
 {
 public:
+    using BasePacketImpl<packet_fence>::generatePacket;
     GenFence(uint32_t decVal,
              uint32_t targetVal,
              uint32_t id,
@@ -191,6 +193,7 @@ private:
 class GenNop : public BasePacketImpl<packet_nop>
 {
 public:
+    using BasePacketImpl<packet_nop>::generatePacket;
     GenNop(uint32_t engBarrier, uint32_t regBarrier, uint32_t msgBarrier);
 
     static void generatePacket(char*&   pPacket,
@@ -277,6 +280,7 @@ public:
 class GenLoadAndExecute : public BasePacketImpl<packet_load_and_exe>
 {
 public:
+    using BasePacketImpl<packet_load_and_exe>::generatePacket;
     GenLoadAndExecute(bool     isLoad,
                       bool     isDst, /* else will load predicates */
                       bool     isExecute,

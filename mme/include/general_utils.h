@@ -1,6 +1,7 @@
 #ifndef MME__GENERAL_UTILS_H
 #define MME__GENERAL_UTILS_H
 
+#include <cstdint>
 #include <array>
 #include <cmath>
 #include <numeric>

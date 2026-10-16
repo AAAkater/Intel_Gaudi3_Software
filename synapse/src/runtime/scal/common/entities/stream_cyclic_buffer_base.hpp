@@ -52,6 +52,14 @@ public:
     }
 
     void doneChunkOfCommands(ScalLongSyncObject& rLongSo);
+    void recordNativePageCompletion(uint32_t pageBytes, const ScalLongSyncObject& completion)
+    {
+        if (!m_isFirstJobInChunk) return;
+        const uint64_t size = uint64_t(GCFG_HOST_CYCLIC_BUFFER_SIZE.value()) * 1024;
+        const uint64_t pageStart = (m_offsetInBuffer + size - pageBytes) % size;
+        m_barrierToCompeltionHandle[pageStart / getCcbChunkSize()] = completion;
+        m_isFirstJobInChunk = false;
+    }
 
     inline bool isFirstJobInChunk() const { return m_isFirstJobInChunk; };
 

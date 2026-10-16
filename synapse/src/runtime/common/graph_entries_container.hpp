@@ -49,7 +49,8 @@ public:
 
     synStatus getCurrentGraphId(GraphId& graphId);
 
-    HabanaGraphPtr destroyGraph(synGraphHandle graphHandle);
+    using SectionHandleVec = llvm_vecsmall::SmallVector<synSectionHandle, MAX_TENSOR_NR>;
+    HabanaGraphPtr destroyGraph(synGraphHandle graphHandle, SectionHandleVec* retiredSections = nullptr);
 
     void destroyAllGraphs();
 
@@ -81,7 +82,6 @@ public:
                            void*                      ptr,
                            uint32_t                   graphId);
 
-    using SectionHandleVec = llvm_vecsmall::SmallVector<synSectionHandle, MAX_TENSOR_NR>;
     void setSections(GraphId currGraph, const SectionHandleVec& sectionHandles);
     void setSection(GraphId currGraph, synSectionHandle sectionHandle);
     void removeSection(GraphId currGraph, synSectionHandle sectionHandle);

@@ -83,3 +83,60 @@ TEST_F(LaTest, liveness_analysis_test)
     EXPECT_EQ(ls->isRealTensorAliveAfterNode(node_2, tensor_3), false);
     EXPECT_EQ(ls->isRealTensorAliveAfterNode(node_2, tensor_5), false);
 }
+
+TEST_F(LaTest, persistent_input_reuse_ends_lifetime_at_final_consumer)
+{
+    TSize sizes[] = {4};
+    TensorPtr input(new Tensor(1, sizes, syn_type_float));
+    TensorPtr intermediate0(new Tensor(1, sizes, syn_type_float));
+    TensorPtr intermediate1(new Tensor(1, sizes, syn_type_float));
+    TensorPtr output(new Tensor(1, sizes, syn_type_float));
+
+    input->setMemoryDescriptor(synMemoryDescriptor(true));
+    input->setTensorAsReusable(true);
+
+    GaudiGraph graph;
+    auto node0 = NodeFactory::createNode({input}, {intermediate0}, nullptr, NodeFactory::memcpyNodeTypeName, "reuse_0");
+    auto node1 = NodeFactory::createNode(
+        {intermediate0}, {intermediate1}, nullptr, NodeFactory::memcpyNodeTypeName, "reuse_1");
+    auto node2 =
+        NodeFactory::createNode({intermediate1}, {output}, nullptr, NodeFactory::memcpyNodeTypeName, "reuse_2");
+    GraphEditor::addNode(graph, node0);
+    GraphEditor::addNode(graph, node1);
+    GraphEditor::addNode(graph, node2);
+
+    UNUSED(graph.getExeSortedNodes());
+    AllLivenessAnalysis reusableAnalysis(&graph);
+    const Lifetime reusableLifetime = reusableAnalysis.getTensorLifeTime(input);
+    EXPECT_EQ(graph.getMinExecutionOrderedIndex(), reusableLifetime.m_start);
+    EXPECT_EQ(node0->getExecutionOrderedIndex(), reusableLifetime.m_end);
+    EXPECT_LT(reusableLifetime.m_end, graph.getMaxExecutionOrderedIndex());
+
+    input->setTensorAsReusable(false);
+    AllLivenessAnalysis ordinaryAnalysis(&graph);
+    const Lifetime ordinaryLifetime = ordinaryAnalysis.getTensorLifeTime(input);
+    EXPECT_EQ(graph.getMinExecutionOrderedIndex(), ordinaryLifetime.m_start);
+    EXPECT_EQ(graph.getMaxExecutionOrderedIndex(), ordinaryLifetime.m_end);
+}
+
+TEST_F(LaTest, minimal_latency_output_prioritizes_an_independent_ready_node)
+{
+    TSize sizes[] = {4};
+    TensorPtr slowInput(new Tensor(1, sizes, syn_type_float));
+    TensorPtr slowOutput(new Tensor(1, sizes, syn_type_float));
+    TensorPtr fastInput(new Tensor(1, sizes, syn_type_float));
+    TensorPtr fastOutput(new Tensor(1, sizes, syn_type_float));
+    fastOutput->setMinimalLatency(true);
+
+    GaudiGraph graph;
+    auto slow =
+        NodeFactory::createNode({slowInput}, {slowOutput}, nullptr, NodeFactory::memcpyNodeTypeName, "slow_ready");
+    auto fast =
+        NodeFactory::createNode({fastInput}, {fastOutput}, nullptr, NodeFactory::memcpyNodeTypeName, "fast_ready");
+    GraphEditor::addNode(graph, slow);
+    GraphEditor::addNode(graph, fast);
+
+    const NodeVector& schedule = graph.getExeSortedNodes();
+    ASSERT_EQ(2u, schedule.size());
+    EXPECT_EQ(fast, schedule.front());
+}

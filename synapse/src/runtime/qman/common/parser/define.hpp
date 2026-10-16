@@ -3,6 +3,7 @@
 #include "graph_compiler/sync/sync_types.h"
 
 #include <stddef.h>
+#include <cstdint>
 #include <limits>
 
 // We use INFO level for the Parser-Print-Log, to be able to print all logs, in case of a failure

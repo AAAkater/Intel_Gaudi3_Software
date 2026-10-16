@@ -39,6 +39,10 @@ bool NodeScheduleComparator::operator()(const NodePtr& n1, const NodePtr& n2) co
     if (!n1Memcpy && n2Memcpy) return true;
     if (n1Memcpy && !n2Memcpy) return false;
 
+    const bool n1MinimalLatency = n1->producesMinimalLatencyTensor();
+    const bool n2MinimalLatency = n2->producesMinimalLatencyTensor();
+    if (n1MinimalLatency != n2MinimalLatency) return n1MinimalLatency;
+
     //fall-through path, just break ties by order of creation for consistency between compilations
     return n1->getId() < n2->getId();
 }

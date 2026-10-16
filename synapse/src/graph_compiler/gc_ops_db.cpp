@@ -57,22 +57,22 @@ GCOpsDB::GCOpsDB()
 
     // clang-format off
     registerOp(NodeFactory::transposeNodeTypeName,        details::getTransposeOpInfoMap());
-    registerOp(NodeFactory::splitShapeNodeTypeName,       details::getSplitShapeOpInfoMap());
-    registerOp(NodeFactory::stridedViewNodeTypeName,      details::getStridedViewOpInfoMap());
-    registerOp(NodeFactory::stridedInsertNodeTypeName,    details::getStridedInsertOpInfoMap());
-    registerOp(NodeFactory::stridedSliceGradNodeTypeName, details::getStridedSliceGradOpInfoMap());
-    registerOp(NodeFactory::sliceInsertNodeTypeName,      details::getSliceInsertOpInfoMap());
+    registerOp(NodeFactory::splitShapeNodeTypeName,       details::getSplitShapeOpInfoMap(), true, false);
+    registerOp(NodeFactory::stridedViewNodeTypeName,      details::getStridedViewOpInfoMap(), true, true);
+    registerOp(NodeFactory::stridedInsertNodeTypeName,    details::getStridedInsertOpInfoMap(), false, true);
+    registerOp(NodeFactory::stridedSliceGradNodeTypeName, details::getStridedSliceGradOpInfoMap(), true, true);
+    registerOp(NodeFactory::sliceInsertNodeTypeName,      details::getSliceInsertOpInfoMap(), false, true);
     registerOp(NodeFactory::squeezeNodeTypeName,          details::getSqueezeOpInfoMap());
     registerOp(NodeFactory::splitNodeTypeName,            details::getSplitOpInfoMap());
     registerOp(NodeFactory::sliceAxisNodeTypeName,        details::getSliceAxisOpInfoMap());
-    registerOp(NodeFactory::sliceNodeTypeName,            details::getSliceFwdOpInfoMap());
+    registerOp(NodeFactory::sliceNodeTypeName,            details::getSliceFwdOpInfoMap(), true, true);
     registerOp(NodeFactory::flattenNodeTypeName,          details::getFlattenOpInfoMap());
     registerOp(NodeFactory::expandDimsNodeTypeName,       details::getExpandDimsOpInfoMap());
     registerOp(NodeFactory::identityNodeTypeName,         details::getIdentityOpInfoMap());
     registerOp(NodeFactory::memcpyNodeTypeName,           details::getMemcpyOpInfoMap());
     registerOp(NodeFactory::memsetNodeTypeName,           details::getMemsetOpInfoMap());
     registerOp(NodeFactory::reinterpretCastNodeTypeName,  details::getReinterpretCastOpInfoMap());
-    registerOp(NodeFactory::reshapeNodeTypeName,          details::getReshapeOpInfoMap());
+    registerOp(NodeFactory::reshapeNodeTypeName,          details::getReshapeOpInfoMap(), true, false);
     registerOp(NodeFactory::broadcastNodeTypeName,        details::getBroadcastOpInfoMap());
     registerOp(NodeFactory::concatenateNodeTypeName,      details::getConcatOpInfoMap());
     registerOp(NodeFactory::momentsFwdNodeTypeName,       details::getNormMomentsOpInfoMap());
@@ -115,7 +115,10 @@ GCOpsDB& GCOpsDB::instance()
     return opdb;
 }
 
-void GCOpsDB::registerOp(const std::string& guid, const DeviceTypeToOpInfoMap& opInfoMap)
+void GCOpsDB::registerOp(const std::string&          guid,
+                         const DeviceTypeToOpInfoMap& opInfoMap,
+                         bool                        supportsShapeTensorInput,
+                         bool                        supportsH2DTensorInput)
 {
     HB_ASSERT(!guid.empty(), "Expecting a non-empty guid");
     HB_ASSERT(NodeFactory::getInstance().isApiNode(guid), "Internal guid {} is not supported", guid);
@@ -131,6 +134,8 @@ void GCOpsDB::registerOp(const std::string& guid, const DeviceTypeToOpInfoMap& o
         }
 
         HB_ASSERT_PTR(it->second);
+        it->second->supportsShapeTensorInput = supportsShapeTensorInput;
+        it->second->supportsH2DTensorInput   = supportsH2DTensorInput;
         for (const auto& isInput : {true, false})
         {
             const auto& supportedDatatypes =

@@ -70,6 +70,7 @@ struct SectionHandleExternal; // this is a type that is not defined, used to cre
 struct InternalStreamHandle;
 struct InternalGraphHandle;
 struct EventInterfaceExternal;
+struct InternalNativeComputeGraphHandle;
 
 typedef struct EventInterfaceExternal*  synEventHandle;
 typedef struct InternalRecipeHandle*    synRecipeHandle;
@@ -79,8 +80,38 @@ typedef struct InternalGraphHandle*     synGraphHandle;
 typedef uint32_t                        synModuleId;
 typedef uint32_t                        synDeviceId;
 typedef struct InternalStreamHandle*    synStreamHandle;
+typedef struct InternalNativeComputeGraphHandle* synNativeComputeGraphHandle;
 typedef uint64_t                        synNodeId;
 typedef uint32_t                        synSectionId;
+
+typedef enum
+{
+    synNativeGraphCreated = 0,
+    synNativeGraphCapturing,
+    synNativeGraphInstantiated,
+    synNativeGraphInvalid,
+    synNativeGraphClosed
+} synNativeGraphState;
+
+typedef struct
+{
+    synNativeGraphState state;
+    uint64_t            segmentCount;
+    uint64_t            replayCount;
+    uint32_t            completionLongSoIndex;
+    uint64_t            completionTarget;
+    uint64_t            globalProgramBytes;
+    uint64_t            arcProgramBytes;
+} synNativeComputeGraphInfo;
+
+typedef struct
+{
+    uint32_t longSoIndex;
+    uint64_t targetValue;
+} synNativeGraphSyncInfo;
+
+typedef int (*synNativeGraphExchangeReplay)(void* context, const synNativeGraphSyncInfo* producers,
+                                            uint64_t count, synNativeGraphSyncInfo* completions);
 
 
 typedef struct
@@ -91,6 +122,23 @@ typedef struct
     TSize           tensorSize[HABANA_DIM_MAX];
     uint64_t        tensorId;
 } synLaunchTensorInfo;
+
+typedef struct
+{
+    unsigned groupId;
+    unsigned executionOrderedIndex;
+} synUserExecOrder;
+
+typedef struct
+{
+    unsigned bundleUserIndex;
+} synUserBundling;
+
+typedef struct
+{
+    synUserExecOrder* userExecOrder;
+    synUserBundling*  userBundling;
+} synUserProgrammability;
 
 typedef struct
 {

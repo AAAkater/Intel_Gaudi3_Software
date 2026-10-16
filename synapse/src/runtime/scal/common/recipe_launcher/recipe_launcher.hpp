@@ -27,6 +27,8 @@ class MemMgrs;
 class DynamicRecipe;
 class ScalStreamCopyInterface;
 class ScalStreamComputeInterface;
+class NativeRecipeMemory;
+struct NativeScalCommandBuffer;
 
 struct LaunchInfo
 {
@@ -85,7 +87,9 @@ public:
                    const InternalRecipeHandle*     pRecipeHandle,
                    DynamicRecipe*                  pDynamicRecipeProcessor,
                    uint64_t                        runningId,
-                   uint8_t                         apiId);
+                   uint8_t                         apiId,
+                   NativeRecipeMemory*             nativeRecipeMemory = nullptr,
+                   NativeScalCommandBuffer*        nativeCommands = nullptr);
 
     virtual ~RecipeLauncher() {}
 
@@ -182,6 +186,9 @@ private:
     DynamicRecipe*                  m_pDynamicRecipeProcessor;
     const bool                      m_isIH2DRecipe;
     const uint8_t                   m_apiId;
+
+    NativeRecipeMemory*      m_nativeRecipeMemory = nullptr;
+    NativeScalCommandBuffer* m_nativeCommands     = nullptr;
 
     uint64_t m_computeWorkCompletionAddress = 0;
     uint32_t m_computeWorkCompletionValue   = 0;

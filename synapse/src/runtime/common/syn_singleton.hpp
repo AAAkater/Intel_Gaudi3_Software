@@ -199,6 +199,12 @@ public:
 
     synStatus tensorGetIsExternal(const synTensor tensor, bool* isExternal) override;
 
+    synStatus tensorSetIsReusable(synTensor tensor, bool isReusable) override;
+
+    synStatus tensorSetMinimalLatency(synTensor tensor, bool minimalLatency) override;
+
+    synStatus tensorGetMinimalLatency(const synTensor tensor, bool* minimalLatency) override;
+
     synStatus tensorSetDeviceLayout(    synTensor                    tensor,
                                         const synTensorDeviceLayout* layout) override;
 
@@ -753,6 +759,30 @@ public:
 
     synStatus getDeviceInfo(unsigned         devIdx,
                             synDeviceInfoV2* pDeviceInfo) const override;
+
+    synStatus nodeSetUserProgrammability(const synGraphHandle           graphHandle,
+                                         synNodeId                     nodeId,
+                                         const synUserProgrammability* userProgrammability) override;
+
+    synStatus updateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec) const override;
+
+    synStatus synDumpStateAndTerminate(const char* msg, uint64_t flags) override;
+
+    synStatus nativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                       synStreamHandle              streamHandle);
+    synStatus nativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle);
+    synStatus nativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle);
+    synStatus nativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle);
+    synStatus nativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                        synNativeComputeGraphInfo*   graphInfo) const;
+    synStatus nativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle);
+    synStatus nativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle);
+    synStatus nativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                              uint64_t                      segmentIndex,
+                                              const synNativeGraphSyncInfo* dependency,
+                                              uint8_t                       submit,
+                                              synNativeGraphSyncInfo*       completion);
+    synStatus nativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle);
 
 private:
     static void                   initSingleton();

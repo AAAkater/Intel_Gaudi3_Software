@@ -1348,6 +1348,45 @@ public:
         VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
         return m_originalImpl->getModuleId(idOut);
     }
+
+    virtual synStatus tensorSetIsReusable(synTensor tensor, bool isReusable)
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->tensorSetIsReusable(tensor, isReusable);
+    }
+
+    virtual synStatus tensorSetMinimalLatency(synTensor tensor, bool minimalLatency)
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->tensorSetMinimalLatency(tensor, minimalLatency);
+    }
+
+    virtual synStatus tensorGetMinimalLatency(const synTensor tensor, bool* minimalLatency)
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->tensorGetMinimalLatency(tensor, minimalLatency);
+    }
+
+    virtual synStatus nodeSetUserProgrammability(const synGraphHandle           graphHandle,
+                                                 synNodeId                     nodeId,
+                                                 const synUserProgrammability* userProgrammability)
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->nodeSetUserProgrammability(graphHandle, nodeId, userProgrammability);
+    }
+
+    virtual synStatus updateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec) const
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->updateMemoryConsumption(usedMem, timestampSec);
+    }
+
+    virtual synStatus synDumpStateAndTerminate(const char* msg, uint64_t flags)
+    {
+        VERIFY_ORIGINAL_IMPL_RET_UNSUPPORTED
+        return m_originalImpl->synDumpStateAndTerminate(msg, flags);
+    }
+
 };
 
 #endif /*_SYN_SYN_SINGLETON_INTERFACE_H_*/

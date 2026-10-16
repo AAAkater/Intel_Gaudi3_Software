@@ -1,6 +1,8 @@
 #ifndef MME__DESCRIPTOR_CACHE_H
 #define MME__DESCRIPTOR_CACHE_H
 
+#include <cstdlib>
+#include <string>
 #include <memory>
 #include <mutex>
 #include <unordered_map>

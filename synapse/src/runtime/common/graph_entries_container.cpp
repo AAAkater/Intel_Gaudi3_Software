@@ -114,7 +114,7 @@ HabanaGraph* GraphEntriesContainer::_getGraph(GraphId graphId)
     return itGraph->second.graph.get();
 }
 
-HabanaGraphPtr GraphEntriesContainer::destroyGraph(synGraphHandle graphHandle)
+HabanaGraphPtr GraphEntriesContainer::destroyGraph(synGraphHandle graphHandle, SectionHandleVec* retiredSections)
 {
     GraphId graphId = graphHandle->graphId;
     auto    itGraph = m_graphs.find(graphId);
@@ -124,7 +124,19 @@ HabanaGraphPtr GraphEntriesContainer::destroyGraph(synGraphHandle graphHandle)
         return HabanaGraphPtr();
     }
     _destroyTensors(itGraph->second);
-    _destroySections(itGraph->second);
+    if (retiredSections != nullptr)
+    {
+        retiredSections->clear();
+        for (synSectionHandle section : itGraph->second.sectionHandles)
+        {
+            retiredSections->push_back(section);
+        }
+        itGraph->second.sectionHandles.clear();
+    }
+    else
+    {
+        _destroySections(itGraph->second);
+    }
     HabanaGraphPtr graphPtr(std::move(itGraph->second.graph));
     m_graphs.erase(graphId);
     return graphPtr;
@@ -177,6 +189,10 @@ void GraphEntriesContainer::destroyAllGraphs()
     for (auto& graphPair : m_graphs)
     {
         _destroyTensors(graphPair.second);
+        graphPair.second.graph.reset();
+    }
+    for (auto& graphPair : m_graphs)
+    {
         _destroySections(graphPair.second);
     }
     m_graphs.clear();

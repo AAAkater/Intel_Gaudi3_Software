@@ -31,9 +31,10 @@ enum sched_compute_arc_cmd_opcode_t {
 	SCHED_COMPUTE_ARC_CMD_DISPATCH_COMPUTE_ECB_LIST_V3 = 7,
 	SCHED_COMPUTE_ARC_CMD_PDMA_BATCH_TRANSFER = 8,
 	SCHED_COMPUTE_ARC_CMD_UPDATE_RECIPE_BASE_V2 = 9,
-	SCHED_COMPUTE_ARC_CMD_LBW_READ = 10,			// TODO: Only in Debug
-	SCHED_COMPUTE_ARC_CMD_MEM_FENCE = 11,			// TODO: Only in Debug
-	SCHED_COMPUTE_ARC_CMD_COUNT = 12,
+	SCHED_COMPUTE_ARC_CMD_WAIT_FOR_EXT_SIGNAL = 10,
+	SCHED_COMPUTE_ARC_CMD_LBW_READ = 11,			// TODO: Only in Debug
+	SCHED_COMPUTE_ARC_CMD_MEM_FENCE = 12,			// TODO: Only in Debug
+	SCHED_COMPUTE_ARC_CMD_COUNT = 13,
 	SCHED_COMPUTE_ARC_CMD_SIZE = 0x1F
 };
 /**
@@ -119,9 +120,10 @@ enum sched_scaleout_recv_arc_cmd_opcode_t {
 	SCHED_SCALEOUT_RECV_ARC_CMD_UNUSED = 7,
 	SCHED_SCALEOUT_RECV_ARC_CMD_UPDATE_NIC_GLBL_CTXT = 8,
 	SCHED_SCALEOUT_RECV_ARC_CMD_PDMA_BATCH_TRANSFER = 9,
-	SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ = 10,		// TODO: Only in Debug
-	SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE = 11,		// TODO: Only in Debug
-	SCHED_SCALEOUT_RECV_ARC_CMD_COUNT = 12,
+	SCHED_SCALEOUT_RECV_ARC_CMD_NIC_EDMA_OPS = 10,
+	SCHED_SCALEOUT_RECV_ARC_CMD_LBW_READ = 11,		// TODO: Only in Debug
+	SCHED_SCALEOUT_RECV_ARC_CMD_MEM_FENCE = 12,		// TODO: Only in Debug
+	SCHED_SCALEOUT_RECV_ARC_CMD_COUNT = 13,
 	SCHED_SCALEOUT_RECV_ARC_CMD_SIZE = 0x1F
 };
 
@@ -304,11 +306,11 @@ struct sched_mon_exp_fence_t {
 			/**<
 			 * opcode : MON_EXP_FENCE_UPDATE
 			 */
-			uint32_t fence_id:7;
+			uint32_t fence_id:6;
 			/**<
 			 * Index of the fence counter
 			 */
-			uint32_t reserved:23;
+			uint32_t reserved:24;
 			/**<
 			 * reserved
 			 */
@@ -635,6 +637,54 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
 	 * Array of engine group types to which the alloc barrier
 	 * needs to be sent
 	 */
+	uint32_t watch_dog_sig_value:15;
+	/**<
+	 * Value to be used by firmware to increment the watchdog SOB.
+	 * Watchdog SOB ID is sent as part of Engine Config.
+	 */
+	uint32_t reserved2:17;
+	/**<
+	 * reserved
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
+/**<
+ * Max number of fence IDs that can be accomodated in a single fence_id_arr element
+ */
+#define FENCE_ID_COUNT_IN_ARR_ELEMENT	4
+
+/**<
+ * Max fence count that can be accomodated in a single alloc nic barrier command
+ */
+#define MAX_FENCE_COUNT_IN_ALLOC_NIC_BARRIER	7
+
+/**
+ * \struct  sched_arc_fence_id_arr_t
+ * \brief   array of fence IDs used in Alloc nic barrier command
+ * \details fence Ids that are sent to the device as a part of alloc nic
+ *          barrier command are sent via the above structure. These fence
+ *          ids are incremented
+ */
+struct sched_arc_fence_id_arr_t {
+	uint8_t fence_id[FENCE_ID_COUNT_IN_ARR_ELEMENT];
+} __attribute__ ((aligned(4), __packed__));
+
+/**
+ * \struct  sched_arc_lbw_write_t
+ * \brief   structure to store address and data for lbw write
+ * \details address and data to be written through the lbw
+ */
+struct sched_arc_lbw_write_t {
+	uint32_t addr;
+	/**<
+	 * destination LBU address
+	 * Note: its LBU address and not LBW, it should start with
+	 * 0xFxxxxxx
+	 */
+	uint32_t data;
+	/**<
+	 * source data to be written
+	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -644,20 +694,46 @@ struct sched_arc_cmd_alloc_barrier_v2_t {
  *          to NIC engines
  */
 struct sched_arc_cmd_alloc_nic_barrier_t {
-	uint32_t opcode:5;
-	/**< opcode of the command = SCHED_ARC_CMD_ALLOC_NIC_BARRIER */
-	uint32_t comp_group_index:8;
+	union {
+		struct {
+			uint32_t opcode:5;
+			/**< opcode of the command = SCHED_ARC_CMD_ALLOC_NIC_BARRIER */
+			uint32_t comp_group_index:4;
+			/**<
+			 * Completion Group index. Index bettween 0 to
+			 * (COMP_GROUP_COUNT - 1)
+			 */
+			uint32_t fence_count:4;
+			/**<
+			 * No of fences that needs to be incremented.
+			 * Count can be between 0 to 7
+			 */
+			uint32_t required_sobs:7;
+			/**<
+			 * required number of sobs to be allocated
+			 */
+			uint32_t cmd_size_dwords:6;
+			/**<
+			 * Size of command in bytes
+			 */
+			uint32_t num_lbw_write:5;
+			/**<
+			 * Number of lbw writes
+			 */
+			uint32_t rsvd:1;
+			/**<
+			 * Reserved
+			 */
+		} __attribute__ ((aligned(4), __packed__));
+		uint32_t raw_dword0;
+	};
+	struct sched_arc_fence_id_arr_t fence_arr[0];
 	/**<
-	 * Completion Group index. Index bettween 0 to
-	 * (COMP_GROUP_COUNT - 1)
+	 * array of fence Ids. Each element can contain upto 4 fence IDs
 	 */
-	uint32_t required_sobs:14;
-	/**<
-	 * required number of sobs to be allocated
-	 */
-	uint32_t reserved:5;
-	/**<
-	 * reserved
+	struct sched_arc_lbw_write_t lbw_addr_data[0];
+	/**
+	 * array of data for LBW burst write operation
 	 */
 } __attribute__ ((aligned(4), __packed__));
 
@@ -705,8 +781,9 @@ struct sched_arc_cmd_dispatch_barrier_t {
 struct sched_arc_cmd_fence_wait_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_FENCE_WAIT */
-	uint32_t fence_id:7;
+	uint32_t fence_id:6;
 	/**< Index of the fence register of this stream */
+	uint32_t :1;
 	uint32_t target:6;
 	/**< target value of the fence */
 	uint32_t reserved:14;
@@ -729,10 +806,6 @@ struct sched_arc_cmd_fence_inc_immediate_t {
 	/**< fence index value */
 	uint32_t reserved2:10;
 	/**< reserved */
-	uint8_t fence_id[8];
-	/**<
-	 * array of fence Ids
-	 */
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -772,18 +845,20 @@ struct sched_arc_cmd_lbw_read_t {
 struct sched_arc_cmd_lbw_write_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_LBW_WRITE */
-	uint32_t reserved:25;
+	uint32_t fence:1;
+	/**<
+	 * flag to indicate if firmware needs to do fence wait
+	 */
+	uint32_t fence_id:6;
+	/**<
+	 * fence id on which fence wait needs to be done. Valid only if
+	 * fence is true
+	 */
+	uint32_t target:6;
+	/**< target value of the fence */
+	uint32_t reserved:14;
 	/**<
 	 * Reserved
-	 */
-	uint32_t block_next:1;
-	/**<
-	 * Block execution of next command by putting the stream into
-	 * suspended state
-	 */
-	uint32_t wait_for_completion:1;
-	/**<
-	 * Wait until current write is completed
 	 */
 	uint32_t dst_addr;
 	/**<
@@ -805,7 +880,11 @@ struct sched_arc_cmd_lbw_write_t {
 struct sched_arc_cmd_lbw_burst_write_t {
 	uint32_t opcode:5;
 	/**< opcode of the command = SCHED_ARC_CMD_LBW_BURST_WRITE */
-	uint32_t reserved:25;
+	uint32_t num_lbw_write:5;
+	/**<
+	 * Number of lbw writes
+	 */
+	uint32_t reserved:20;
 	/**<
 	 * Reserved
 	 */
@@ -818,20 +897,19 @@ struct sched_arc_cmd_lbw_burst_write_t {
 	/**<
 	 * Wait until current write is completed
 	 */
-	uint32_t dst_addr;
-	/**<
-	 * destination LBU address
-	 * Note: its LBU address and not LBW, it should start with
-	 * 0xFxxxxxx
-	 */
-	uint32_t src_data0;
-	uint32_t src_data1;
-	uint32_t src_data2;
-	uint32_t src_data3;
-	/**<
-	 * source data to be written, 4 DWORDs are written starting
-	 * from destination address
-	 */
+	struct {
+		uint32_t addr;
+		/**<
+		 * destination LBU address
+		 * Note: its LBU address and not LBW, it should start with
+		 * 0xFxxxxxx
+		 */
+		uint32_t data;
+		/**<
+		 * source data to be written
+		 */
+	} addr_data[0];
+
 } __attribute__ ((aligned(4), __packed__));
 
 /**
@@ -963,7 +1041,7 @@ struct sched_arc_cmd_update_nic_glbl_ctxt_t {
 	struct nic_glbl_ctxt_t glbl_ctxt[0];
 	/**<
 	 * This variable size array contains one or more nic_glbl_ctxt_t
-	 * structure. size is given by num_glbl_ctxt.
+	 * structure. size is given by num_dwords.
 	 * All the NICs receive all the contexts but they pick only their own
 	 * context from this array using CPU ID.
 	 */
@@ -1134,13 +1212,10 @@ struct sched_arc_cmd_nic_edma_ops_t {
 	 * Command Size in Bytes, it includes the dword that
 	 * contains the size field
 	 */
-	struct arc_cmd_nic_edma_ops_v3_t edma_ops_v3[0];
 	struct arc_cmd_update_edma_nic_ctxt_v3_t edma_ctxt_v3[0];
-	struct arc_cmd_nic_edma_ops_cdc_t edma_cdc[0];
 	struct arc_cmd_nic_edma_lin_ops_v3_t lin_ops_v3[0];
-	struct arc_cmd_nic_edma_lin_memset_v3_t edma_lin_memset[0];
+	struct arc_cmd_nic_edma_lin_memset_v3_2_t edma_linear_memset[0];
 	struct arc_cmd_nic_edma_sibo_memset_v3_t sibo_memset_v3[0];
-	struct arc_cmd_nic_edma_sibo_memset_v3_2_t sibo_memset_v3_2[0];
 	struct arc_cmd_nic_edma_sibo_ops_v3_t sibo_ops_v3[0];
 	/**<
 	 * NIC EDMA command payload that needs to be dispatched
@@ -1174,5 +1249,44 @@ struct sched_arc_cmd_nic_coll_ops_scaleout_t {
 	 */
 	struct arc_cmd_coll_ops_scaleout_t cmd_coll_ops_scaleout;
 } __attribute__ ((aligned(4), __packed__));
+
+
+/**
+ * \struct  sched_arc_cmd_wait_for_ext_signal_t
+ * \brief   wait for external signal
+ * \details adds wait to an array of engine group types for external signal
+ */
+struct sched_arc_cmd_wait_for_ext_signal_t {
+	uint32_t opcode:5;
+	/**< opcode of the command = SCHED_ARC_CMD_WAIT_FOR_EXT_SIGNAL */
+	uint32_t sob_id:13;
+	uint32_t sm_id:2;
+	/**<
+	 * SOB related info, for monitor arming
+	 */
+	uint32_t num_engine_group_type:8;
+	/**<
+	 * Number of engine group types to which the external signal needs
+	 * to be sent
+	 */
+	uint32_t reserved:4;
+	/**< reserved */
+	union {
+		struct {
+			uint64_t target_value0:15;
+			uint64_t target_value1:15;
+			uint64_t target_value2:15;
+			uint64_t target_value3:15;
+			uint64_t reserved0:4;
+		} __attribute__ ((aligned(4), __packed__));
+		uint64_t target_value;
+	};
+	uint8_t engine_group_type[4];
+	/**<
+	 * Array of engine group types to which the external signal needs
+	 * to be sent
+	 */
+} __attribute__ ((aligned(4), __packed__));
+
 
 #endif /* __GAUDI2_ARC_SCHED_PACKETS_H__ */

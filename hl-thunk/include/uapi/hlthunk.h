@@ -2680,6 +2680,12 @@ hlthunk_public int hlthunk_get_dev_info_signed(int fd, uint32_t nonce,
 hlthunk_public int hlthunk_get_time_sync_per_die_info(int fd, uint32_t die_index,
 					struct hlthunk_time_sync_info *info);
 
+/**
+ * Report process device-memory consumption to the kernel driver.
+ */
+hlthunk_public int hlthunk_set_memory_consumption(int fd, uint64_t used_mem_bytes,
+                                                  uint64_t timestamp_sec);
+
 #ifdef __cplusplus
 }   //extern "C"
 #endif

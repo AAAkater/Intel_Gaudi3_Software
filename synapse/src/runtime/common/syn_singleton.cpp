@@ -1001,6 +1001,67 @@ synStatus synSingleton::destroyStream(synStreamHandle streamHandle)
     return deviceInterface->destroyStream(streamHandle);
 }
 
+synStatus synSingleton::nativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                                 synStreamHandle              streamHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphCreate(graphHandle, streamHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphBeginCapture(graphHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphEndCapture(graphHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphReplay(graphHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                                  synNativeComputeGraphInfo*   graphInfo) const
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphGetInfo(graphHandle, graphInfo);
+}
+
+synStatus synSingleton::nativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphDestroy(graphHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphBeginReplay(graphHandle);
+}
+
+synStatus synSingleton::nativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                                        uint64_t                      segmentIndex,
+                                                        const synNativeGraphSyncInfo* dependency,
+                                                        uint8_t                       submit,
+                                                        synNativeGraphSyncInfo*       completion)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphReplaySegment(
+        graphHandle, segmentIndex, dependency, submit, completion);
+}
+
+synStatus synSingleton::nativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle)
+{
+    GET_DEV_INTERFACE_RTN_IF_ERR();
+    return deviceInterface->nativeComputeGraphAbortCapture(graphHandle);
+}
+
 synStatus synSingleton::createEvent(synEventHandle* pEventHandle, const uint32_t devIdx, const unsigned int flags)
 {
     LOG_SINGLETON_API();
@@ -2067,6 +2128,34 @@ void synSingleton::notifyHlthunkFailure(DfaErrorCode errCode, const DfaExtraInfo
     }
 
     return deviceInterface->notifyHlthunkFailure(errCode, dfaExtraInfo);
+}
+
+synStatus synSingleton::updateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec) const
+{
+    return OSAL::getInstance().updateMemoryConsumption(usedMem, timestampSec);
+}
+
+synStatus synSingleton::synDumpStateAndTerminate(const char* msg, uint64_t flags)
+{
+    if (flags != 0)
+    {
+        LOG_ERR(SYN_API, "{}: flags must be zero, received {:#x}", HLLOG_FUNC, flags);
+        return synInvalidArgument;
+    }
+    if (!OSAL::getInstance().isAcquired())
+    {
+        LOG_ERR(SYN_API, "{}: no device is acquired", HLLOG_FUNC);
+        return synNoDeviceFound;
+    }
+
+    const std::string message = msg == nullptr ? std::string() : std::string(msg);
+    LOG_ERR(SYN_DEV_FAIL, "User requested DFA from Synapse API, message '{}', flags {:#x}", message, flags);
+    DfaExtraInfo dfaExtraInfo = {.extraInfo = DfaExtraInfo::DfaExtraInfoMsg {.msg = message}};
+    notifyHlthunkFailure(DfaErrorCode::userRequested, dfaExtraInfo);
+
+    // A functioning DFA path terminates the process. Reaching this return
+    // means the request could not complete its documented action.
+    return synFail;
 }
 
 synStatus synSingleton::getDynamicShapesTensorInfoArray(synStreamHandle             streamHandle,

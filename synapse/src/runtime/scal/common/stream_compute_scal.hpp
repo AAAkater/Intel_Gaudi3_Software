@@ -13,6 +13,8 @@ struct PreAllocatedStreamMemoryAll;
 class DevMemoryAllocInterface;
 class DynamicRecipe;
 class ScalStreamComputeInterface;
+class ScalMemoryPool;
+class NativeComputeGraph;
 
 class QueueComputeScal : public QueueBaseScalCommon
 {
@@ -25,7 +27,9 @@ public:
                      const ComputeCompoundResources* pComputeResources,
                      synDeviceType                   deviceType,
                      const ScalDevSpecificInfo&      rDevSpecificInfo,
-                     DevMemoryAllocInterface&        devMemoryAlloc);
+                     DevMemoryAllocInterface&        devMemoryAlloc,
+                     ScalMemoryPool&                 globalPool,
+                     ScalMemoryPool&                 hbmSharedPool);
 
     virtual ~QueueComputeScal();
 
@@ -77,6 +81,29 @@ public:
     virtual synStatus getDynamicShapesTensorInfoArray(synRecipeHandle             recipeHandle,
                                                       std::vector<tensor_info_t>& tensorInfoArray) const;
 
+    std::unique_ptr<NativeComputeGraph> createNativeComputeGraph();
+    synStatus beginNativeComputeGraphCapture(NativeComputeGraph& graph);
+    synStatus endNativeComputeGraphCapture(NativeComputeGraph& graph);
+    synStatus abortNativeComputeGraphCapture(NativeComputeGraph& graph);
+    synStatus replayNativeComputeGraph(NativeComputeGraph& graph);
+    synStatus beginNativeComputeGraphReplay(NativeComputeGraph& graph);
+    synStatus prepareNativeComputePlan(NativeComputeGraph& graph, const uint32_t* consumers,
+        uint64_t count, uint32_t nicIndex, synNativeGraphExchangeReplay callback, void* context, const uint32_t* producers = nullptr);
+    synStatus prepareSegmentedNativeComputePlan(NativeComputeGraph& graph, const uint32_t* producers,
+        const uint32_t* consumers, uint64_t count, uint64_t prefixCollectives, uint32_t prefixComputes, uint32_t nicIndex,
+        synNativeGraphExchangeReplay callback, void* context);
+    synStatus replayNativeComputePlan(NativeComputeGraph& graph, synNativeGraphSyncInfo& completion,
+        uint64_t* statistics, uint64_t count);
+    synStatus replayNativeComputePlanPrefix(NativeComputeGraph& graph, synNativeGraphSyncInfo& completion,
+        uint64_t* statistics, uint64_t count);
+    synStatus replayNativeComputePlanFinish(NativeComputeGraph& graph, synNativeGraphSyncInfo& completion,
+        uint64_t* statistics, uint64_t count);
+    synStatus replayNativeComputeGraphSegment(NativeComputeGraph&       graph,
+                                              size_t                    segmentIndex,
+                                              const ScalLongSyncObject* dependency,
+                                              bool                      submit,
+                                              ScalLongSyncObject&       completion);
+
 private:
     synStatus initMemMgrs();
     synStatus      launch(const LaunchInfo& launchInfo);
@@ -93,6 +120,8 @@ private:
     LaunchTracker m_launchTracker;
 
     DevMemoryAllocInterface& m_devMemoryAlloc;
+    ScalMemoryPool&          m_globalPool;
+    ScalMemoryPool&          m_hbmSharedPool;
 
     uint64_t m_runningId = 0;
 
@@ -108,4 +137,5 @@ private:
     std::unordered_map<uint64_t, std::unique_ptr<DynamicRecipe>> m_dynamicShapeProcessor;
 
     const ComputeCompoundResources m_computeResources;
+    NativeComputeGraph*             m_activeNativeGraph = nullptr;
 };

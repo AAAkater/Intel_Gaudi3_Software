@@ -86,6 +86,7 @@ public:
 
     int           getFd() const;
     synDeviceType getDeviceType() const;
+    synStatus     updateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec) const;
 
     synStatus          GetDeviceInfo(synDeviceInfo& deviceInfo);
     synStatus          getDeviceLimitationInfo(synDeviceLimitationInfo& deviceLimitationInfo);

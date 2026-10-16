@@ -182,7 +182,7 @@ class HeapAllocatorWrapper : public MemoryAllocatorBase
 {
 public:
     explicit HeapAllocatorWrapper(const std::string&                    name,
-                                  const TensorVector&                   outputTensors,
+                                  const TensorVector&                   reusablePersistentTensors,
                                   const LivenessAnalysis&               livenessAnalysis,
                                   const std::shared_ptr<HeapAllocator>& workspaceHeapAllocator,
                                   uint32_t                              statFreq,

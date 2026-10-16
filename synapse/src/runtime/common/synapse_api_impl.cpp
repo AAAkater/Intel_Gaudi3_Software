@@ -1,6 +1,7 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
+#include <shared_mutex>
 #include <version.h>
 #include "defs.h"
 #include "synapse_api.h"
@@ -12,10 +13,34 @@
 #include "api.h"
 #include "runtime/common/recipe/recipe_handle_impl.hpp"
 
+namespace
+{
+// The legacy profiler erases recipe metadata after the wrapped destroy frees
+// its handle. Prevent a concurrent compile/deserialize from reusing that address
+// and having its new metadata erased by the older destruction.
+std::shared_mutex recipeRegistrationLifetime;
+}
+
+const char* SYN_API_CALL synGetLastErrorMessage()
+{
+    return synapse::api_error::getLastErrorMessage();
+}
+
+synStatus SYN_API_CALL synGetLastError()
+{
+    return synapse::api_error::getLastError();
+}
+
+const char* SYN_API_CALL synGetErrorString(synStatus status)
+{
+    return synapse::api_error::getErrorString(status);
+}
+
 #define VERIFY_IS_NULL_POINTER(pointer, name)                                                                          \
     if (pointer == nullptr)                                                                                            \
     {                                                                                                                  \
         LOG_WARN(SYN_API, "{}: got null pointer for {} ", HLLOG_FUNC, name);                                           \
+        synapse::api_error::set(synInvalidArgument, __FUNCTION__, "Null output pointer");                              \
         return synInvalidArgument;                                                                                     \
     }
 
@@ -68,6 +93,92 @@ synStatus SYN_API_CALL synStreamQuery(const synStreamHandle streamHandle)
     LOG_SYN_API("StreamHandle 0x{:x}", TO64(streamHandle));
     status = _SYN_SINGLETON_->streamQuery(streamHandle);
     API_EXIT_STATUS_TIMED(status, synStreamQueryP);
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphCreate(synNativeComputeGraphHandle* graphHandle,
+                                                   const synStreamHandle        streamHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    VERIFY_IS_NULL_POINTER(streamHandle, "streamHandle");
+    // Native decode graphs are an experimental runtime extension and are not
+    // part of the versioned synSingletonInterface consumed by libhl_shim.so.
+    // Dispatch directly to the in-library implementation so an older shim
+    // cannot interpret a newly appended virtual slot as another API.
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphCreate(graphHandle, streamHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphBeginCapture(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphBeginCapture(graphHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphEndCapture(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphEndCapture(graphHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphAbortCapture(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphAbortCapture(graphHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphReplay(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphReplay(graphHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphBeginReplay(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphBeginReplay(graphHandle);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphReplaySegment(synNativeComputeGraphHandle   graphHandle,
+                                                          uint64_t                      segmentIndex,
+                                                          const synNativeGraphSyncInfo* dependency,
+                                                          uint8_t                       submit,
+                                                          synNativeGraphSyncInfo*       completion)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    VERIFY_IS_NULL_POINTER(completion, "completion");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphReplaySegment(
+        graphHandle, segmentIndex, dependency, submit, completion);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphGetInfo(synNativeComputeGraphHandle graphHandle,
+                                                    synNativeComputeGraphInfo*   graphInfo)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    VERIFY_IS_NULL_POINTER(graphInfo, "graphInfo");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphGetInfo(graphHandle, graphInfo);
+    API_EXIT_STATUS(status)
+}
+
+synStatus SYN_API_CALL synNativeComputeGraphDestroy(synNativeComputeGraphHandle graphHandle)
+{
+    API_ENTRY_STATUS()
+    VERIFY_IS_NULL_POINTER(graphHandle, "graphHandle");
+    status = _SYN_SINGLETON_INTERNAL->nativeComputeGraphDestroy(graphHandle);
+    API_EXIT_STATUS(status)
 }
 
 synStatus SYN_API_CALL synEventCreate(synEventHandle* pEventHandle, const synDeviceId deviceId, const uint32_t flags)
@@ -158,6 +269,8 @@ synStatus SYN_API_CALL synTensorExtExtractExecutionOrder(const synRecipeHandle r
 synStatus SYN_API_CALL synRecipeDestroy(synRecipeHandle hRecipe)
 {
     API_ENTRY_STATUS_TIMED()
+    std::unique_lock<std::shared_mutex> recipeLifetimeGuard(recipeRegistrationLifetime, std::defer_lock);
+    if (_SYN_SINGLETON_ != _SYN_SINGLETON_INTERNAL) recipeLifetimeGuard.lock();
     LOG_SYN_API("hRecipe 0x{:x}", TO64(hRecipe));
     status = _SYN_SINGLETON_->recipeDestroy(hRecipe);
     API_EXIT_STATUS_TIMED(status, synRecipeDestroyP);
@@ -281,6 +394,8 @@ synStatus SYN_API_CALL synRecipeSerialize(const synRecipeHandle recipeHandle, co
 synStatus SYN_API_CALL synRecipeDeSerialize(synRecipeHandle* pRecipeHandle, const char* recipeFileName)
 {
     API_ENTRY_STATUS_TIMED()
+    std::shared_lock<std::shared_mutex> recipeLifetimeGuard(recipeRegistrationLifetime, std::defer_lock);
+    if (_SYN_SINGLETON_ != _SYN_SINGLETON_INTERNAL) recipeLifetimeGuard.lock();
     LOG_SYN_API("recipeHandle 0x{:x}", TO64(pRecipeHandle));
     status = _SYN_SINGLETON_->recipeDeSerialize(pRecipeHandle, recipeFileName);
     API_EXIT_STATUS_TIMED(status, synRecipeDeSerializeP);
@@ -756,6 +871,18 @@ synStatus SYN_API_CALL synNodeSetDeterministic(const synGraphHandle graphHandle,
     API_EXIT_STATUS_TIMED(status, synNodeSetDeterministicP);
 }
 
+synStatus SYN_API_CALL synNodeSetUserProgrammability(const synGraphHandle           graphHandle,
+                                                     const synNodeId                nodeId,
+                                                     const synUserProgrammability* userProgrammability)
+{
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API("graphHandle 0x{:x} synNodeId {}", TO64(graphHandle), nodeId);
+    // These backported APIs are absent from the version-locked profiler shim.
+    // Dispatch to the internal object instead of an old plugin's virtual table.
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::nodeSetUserProgrammability(graphHandle, nodeId, userProgrammability);
+    API_EXIT_STATUS_TIMED(status, synNodeSetUserProgrammabilityP);
+}
+
 synStatus SYN_API_CALL synNodeGetDeterministic(const synGraphHandle graphHandle,
                                                const synNodeId      nodeId,
                                                bool*                pUseDeterministic)
@@ -792,6 +919,8 @@ synStatus SYN_API_CALL synGraphCompile(synRecipeHandle*     pRecipeHandle,
                                        const char*          pBuildLog)
 {
     API_ENTRY_STATUS_TIMED()
+    std::shared_lock<std::shared_mutex> recipeLifetimeGuard(recipeRegistrationLifetime, std::defer_lock);
+    if (_SYN_SINGLETON_ != _SYN_SINGLETON_INTERNAL) recipeLifetimeGuard.lock();
     LOG_SYN_API("graphHandle 0x{:x}", TO64(graphHandle));
     status = _SYN_SINGLETON_->compileGraph(pRecipeHandle, graphHandle, pRecipeName, pBuildLog);
     API_EXIT_STATUS_TIMED(status, synGraphCompileP);
@@ -1167,6 +1296,22 @@ synStatus SYN_API_CALL synTensorSetExternal(synTensor tensor, bool isExternal)
     API_EXIT_STATUS_TIMED(status, synTensorSetExternalP);
 }
 
+synStatus SYN_API_CALL synTensorSetMemoryReuse(synTensor tensor, bool isReusable)
+{
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API();
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::tensorSetIsReusable(tensor, isReusable);
+    API_EXIT_STATUS_TIMED(status, synTensorSetMemoryReuseP);
+}
+
+synStatus SYN_API_CALL synTensorSetMinimalLatency(synTensor tensor, bool minimalLatency)
+{
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API();
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::tensorSetMinimalLatency(tensor, minimalLatency);
+    API_EXIT_STATUS_TIMED(status, synTensorSetMinimalLatencyP);
+}
+
 synStatus SYN_API_CALL synTensorSetGeometryExt(synTensor                   tensor,
                                                const synTensorGeometryExt* geometry,
                                                synGeometryType             geometryType)
@@ -1183,7 +1328,11 @@ synStatus SYN_API_CALL synTensorSetGeometry(synTensor                tensor,
 {
     API_ENTRY_STATUS_TIMED()
     LOG_SYN_API();
-    status = _SYN_SINGLETON_->tensorSetGeometryExt(tensor, (synTensorGeometryExt*)geometry, geometryType);
+    // Keep the legacy 32-bit ABI on its original singleton vtable slot.  The
+    // Bridge shim implements this entry directly; forwarding it through the
+    // later Ext slot returns synUnsupported with older compatible shims and
+    // also reinterprets a 32-bit layout as 64-bit geometry.
+    status = _SYN_SINGLETON_->tensorSetGeometry(tensor, geometry, geometryType);
     API_EXIT_STATUS_TIMED(status, synTensorSetGeometryP);
 }
 
@@ -1276,7 +1425,7 @@ synStatus SYN_API_CALL synTensorGetGeometry(synTensor tensor, synTensorGeometry*
 {
     API_ENTRY_STATUS_TIMED()
     LOG_SYN_API();
-    status = _SYN_SINGLETON_->tensorGetGeometryExt(tensor, (synTensorGeometryExt*)geometry, geometryType);
+    status = _SYN_SINGLETON_->tensorGetGeometry(tensor, geometry, geometryType);
     API_EXIT_STATUS_TIMED(status, synTensorGetGeometryP);
 }
 
@@ -1302,6 +1451,14 @@ synStatus SYN_API_CALL synTensorGetExternal(const synTensor tensor, bool* isExte
     LOG_SYN_API();
     status = _SYN_SINGLETON_->tensorGetIsExternal(tensor, isExternal);
     API_EXIT_STATUS_TIMED(status, synTensorGetExternalP);
+}
+
+synStatus SYN_API_CALL synTensorGetMinimalLatency(const synTensor tensor, bool* minimalLatency)
+{
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API();
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::tensorGetMinimalLatency(tensor, minimalLatency);
+    API_EXIT_STATUS_TIMED(status, synTensorGetMinimalLatencyP);
 }
 
 synStatus SYN_API_CALL synTensorGetDeviceDataType(synTensor tensor, synDataType* deviceDataType)
@@ -1451,4 +1608,26 @@ synStatus SYN_API_CALL synNodeGetUserParams(const synGraphHandle graphHandle,
 synStatus SYN_API_CALL synStatusGetBriefDescription(synStatus status, char* statusDescription, size_t len)
 {
     return synSingleton::convertStatusToString(status, statusDescription, len);
+}
+
+synStatus SYN_API_CALL synUpdateMemoryConsumption(uint64_t usedMem, uint64_t timestampSec)
+{
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API("usedMem {} timestampSec {}", usedMem, timestampSec);
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::updateMemoryConsumption(usedMem, timestampSec);
+    API_EXIT_STATUS_TIMED(status, synUpdateMemoryConsumptionP);
+}
+
+synStatus SYN_API_CALL synDumpStateAndTerminate(const char* msg, uint64_t flags)
+{
+    if (!synSingleton::isSynapseInitialized())
+    {
+        synapse::api_error::set(synUninitialized, __FUNCTION__);
+        return synUninitialized;
+    }
+
+    API_ENTRY_STATUS_TIMED()
+    LOG_SYN_API("flags {:#x}", flags);
+    status = _SYN_SINGLETON_INTERNAL->synSingleton::synDumpStateAndTerminate(msg, flags);
+    API_EXIT_STATUS_TIMED(status, synDumpStateAndTerminateP);
 }

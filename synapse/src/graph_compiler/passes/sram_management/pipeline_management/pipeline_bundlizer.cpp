@@ -1386,6 +1386,21 @@ bool MantaRayBundlizer::canBundleSharedInputMmeNode(const MMENodePtr& candidate,
                                                     const MMENodeSet& committedCandidates,
                                                     const TensorPtr&  sharedInput)
 {
+    // Each output window of this compound operator has a decoded full-K
+    // producer. Sharing its small activation across MMEs may leave one of
+    // those producers outside the SRAM bundle. Use the single-MME producer
+    // bundler for these windows; other operators keep normal shared-input
+    // bundling. No reduction dimension or arithmetic is changed.
+    if (candidate->getNumInputs() > 1)
+    {
+        const NodePtr producer = m_graph.getTensorProducer(candidate->getInput(1));
+        constexpr const char* prefix = "custom_deepseek_v41_mxfp4_n512_dequant";
+        if (producer && producer->getGUID().compare(0, std::char_traits<char>::length(prefix), prefix) == 0)
+        {
+            LOG_DEBUG(SRAM_SLICE, "Use independent SRAM producer bundle for {}", candidate->getNodeName());
+            return false;
+        }
+    }
     // Check if the candidate node has ancestors in the candidates group
     // Check against the full candidates group as this relation is asymmetric -
     // no risk of loosing both nodes while we could keep one

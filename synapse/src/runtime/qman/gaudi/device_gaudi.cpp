@@ -32,6 +32,9 @@
 
 #include <iostream>
 
+// Current HCL builds may omit the Gaudi1-only initializer. Gaudi2/3 do not use it.
+extern hcclResult_t hcclInitDeviceGaudi(synDeviceId deviceId) __attribute__((weak));
+
 #define GENERATE_ARBITRATION_COMMAND(isRelease, arbPriority)                                                           \
     do                                                                                                                 \
     {                                                                                                                  \
@@ -187,6 +190,11 @@ DeviceGaudi::DeviceGaudi(const DeviceConstructInfo& deviceConstructInfo)
 
 synStatus DeviceGaudi::acquire(const uint16_t numSyncObj)
 {
+    if (GCFG_INIT_HCCL_ON_ACQUIRE.value() && hcclInitDeviceGaudi == nullptr)
+    {
+        LOG_ERR(SYN_API, "The loaded HCL does not provide Gaudi1 initialization");
+        return synUnsupported;
+    }
     STAT_GLBL_START(deviceMutexDuration);
     std::unique_lock lock(m_mutex);
     STAT_GLBL_COLLECT_TIME(deviceMutexDuration, globalStatPointsEnum::deviceMutexDuration);

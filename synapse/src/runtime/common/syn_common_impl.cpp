@@ -6,6 +6,7 @@
 
 synStatus SYN_API_CALL synInitialize()
 {
+    synapse::api_error::reset();
     synStatus status = synSuccess;
 
     try
@@ -27,11 +28,13 @@ synStatus SYN_API_CALL synInitialize()
         return handleException(__FUNCTION__);
     }
 
+    synapse::api_error::set(status, __FUNCTION__);
     return status;
 }
 
 synStatus SYN_API_CALL synDestroy()
 {
+    synapse::api_error::reset();
     synStatus status = synSuccess;
 
     try
@@ -45,6 +48,7 @@ synStatus SYN_API_CALL synDestroy()
         return handleException(__FUNCTION__);
     }
 
+    synapse::api_error::set(status, __FUNCTION__);
     return status;
 }
 
